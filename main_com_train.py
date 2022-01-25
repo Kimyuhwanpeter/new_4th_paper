@@ -248,9 +248,9 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         loss = seg_loss + no_obj_loss + obj_loss
 
     grads2 = tape.gradient(loss, model.trainable_variables)
-    # new_grads = lambda x,y:[x[i] * y[i] for i in range(len(grads2))]
+    new_grads = lambda x,y:[(x[i] + y[i]) / 2. for i in range(len(grads2))]    # gradient sum?? 
     
-    optim.apply_gradients(zip(grads2, model.trainable_variables))
+    optim.apply_gradients(zip(new_grads(grads, grads2), model.trainable_variables))
 
     return loss
 
