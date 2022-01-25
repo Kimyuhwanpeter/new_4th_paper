@@ -10,15 +10,15 @@ import os
 
 FLAGS = easydict.EasyDict({"img_size": 512,
 
-                           "train_txt_path": "/yuhwan/yuhwan/Dataset/Segmentation/Crop_weed/datasets_IJRR2017/train.txt",
+                           "train_txt_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/train.txt",
 
-                           "val_txt_path": "/yuhwan/yuhwan/Dataset/Segmentation/Crop_weed/datasets_IJRR2017/val.txt",
+                           "val_txt_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/val.txt",
 
-                           "test_txt_path": "/yuhwan/yuhwan/Dataset/Segmentation/Crop_weed/datasets_IJRR2017/test.txt",
+                           "test_txt_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/test.txt",
                            
-                           "label_path": "/yuhwan/yuhwan/Dataset/Segmentation/Crop_weed/datasets_IJRR2017/raw_aug_gray_mask/",
+                           "label_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/raw_aug_gray_mask/",
                            
-                           "image_path": "/yuhwan/yuhwan/Dataset/Segmentation/Crop_weed/datasets_IJRR2017/raw_aug_rgb_img/",
+                           "image_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/raw_aug_rgb_img/",
                            
                            "pre_checkpoint": False,
                            
@@ -36,11 +36,11 @@ FLAGS = easydict.EasyDict({"img_size": 512,
 
                            "batch_size": 4,
 
-                           "sample_images": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/sample_images",
+                           "sample_images": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/sample_images",
 
-                           "save_checkpoint": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/checkpoint",
+                           "save_checkpoint": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint",
 
-                           "save_print": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/train_out.txt",
+                           "save_print": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_out.txt",
 
                            "train": True})
 
@@ -143,18 +143,18 @@ def modified_dice_loss_nonobject(y_true, y_pred):
 
 def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
 
+
     with tf.GradientTape() as tape:
 
         
         batch_labels = tf.reshape(labels, [-1,])
         indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, ignore_label)),1)
-        batch_labels = tf.cast(tf.gather(batch_labels, indices), tf.float32)
+        # batch_labels = tf.cast(tf.gather(batch_labels, indices), tf.float32)
 
         logits = run_model(model, images, True)
         raw_logits = tf.reshape(logits, [-1, FLAGS.total_classes-1])
-        #print(raw_logits.shape)
-        predict = tf.gather(raw_logits, indices)
-        #print(predict.shape)
+        predict = raw_logits[:, 0:1]
+        # predict = tf.gather(raw_logits, indices)
 
         class_im_plain = tf.reshape(class_im_plain, [-1,])
         class_im_plain = tf.cast(tf.gather(class_im_plain, indices), tf.float32)
@@ -170,20 +170,20 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         obj_indices = tf.squeeze(tf.where(tf.not_equal(tf.reshape(objectiness, [-1,]), 0)),1)
         yes_logit_objectiness = tf.gather(logit_objectiness, obj_indices)
         yes_obj_labels = tf.cast(tf.gather(label_objectiness, obj_indices), tf.float32)
-        obj_loss = false_dice_loss(yes_obj_labels, yes_logit_objectiness)
+        obj_loss = true_dice_loss(yes_obj_labels, yes_logit_objectiness)
 
         crop_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), 1)
         crop_weed_labels = tf.gather(batch_labels, crop_weed_indices)
-        crop_weed_logits = tf.gather(crop_output, crop_weed_indices)
+        crop_weed_logits = tf.gather(predict, crop_weed_indices)
         crop_indices = tf.where(tf.not_equal(crop_weed_labels, 1))
         crop_labels = tf.gather(crop_weed_labels, crop_indices)
         crop_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, crop_indices), -1), -1)
-        crop_labels = tf.squeeze(tf.zeros_like(crop_labels, dtype=tf.float32), -1)
+        crop_labels = tf.squeeze(tf.cast(crop_labels, tf.float32), -1)
 
         weed_indices = tf.where(tf.not_equal(crop_weed_labels, 0))
         weed_labels = tf.gather(crop_weed_labels, weed_indices)
         weed_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, weed_indices), -1), -1)
-        weed_labels = tf.squeeze(tf.ones_like(weed_labels, dtype=tf.float32), -1)
+        weed_labels = tf.squeeze(tf.cast(weed_labels, tf.float32), -1)
 
         seg_loss = modified_dice_loss_nonobject(crop_labels, crop_logits) \
             + modified_dice_loss_object(weed_labels, weed_logits)
@@ -199,6 +199,8 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
 
     grads = tape.gradient(loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
+
+    return loss
 
     return loss
 
@@ -296,7 +298,7 @@ def main():
                 #a = np.reshape(class_im_plain, [FLAGS.batch_size*FLAGS.img_size*FLAGS.img_size, ])
                 #a = np.array(a, dtype=np.int32)
                 #a = np.bincount(a, minlength=3)
-                objectiness = np.where(batch_labels == 2, 0, 1)  # ?ǻ?ü?? ?ִ°??? 1 ???°??? 0???? ???????ذ?
+                objectiness = np.where(batch_labels == 2, 0, 1)
 
                 loss = cal_loss(model, batch_images, batch_labels, objectiness, class_im_plain, 2)
                 if count % 10 == 0:
@@ -354,7 +356,7 @@ def main():
                     batch_image = tf.expand_dims(batch_images[j], 0)
                     logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
                     object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                    predict = tf.nn.sigmoid(logits[0, :, :, 0:1])
+                    predict = tf.nn.sigmoid(logits[0, :, :, 0])
                     predict = np.where(predict.numpy() >= 0.5, 1, 0)
                     predict_temp = predict
                     object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
@@ -377,7 +379,7 @@ def main():
                                         label=batch_label, 
                                         shape=[FLAGS.img_size*FLAGS.img_size, ], 
                                         total_classes=FLAGS.total_classes).MIOU()
-                    f1_score_, recall_ = Measurement(predict=predict_temp,
+                    f1_score_, recall_, TP, TN, FP, FN = Measurement(predict=predict_temp,
                                             label=batch_label,
                                             shape=[FLAGS.img_size*FLAGS.img_size, ],
                                             total_classes=FLAGS.total_classes).F1_score_and_recall()
@@ -431,7 +433,7 @@ def main():
                     batch_image = tf.expand_dims(batch_images[j], 0)
                     logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
                     object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                    predict = tf.nn.sigmoid(logits[0, :, :, 0:1])
+                    predict = tf.nn.sigmoid(logits[0, :, :, 0])
                     predict = np.where(predict.numpy() >= 0.5, 1, 0)
                     predict_temp = predict
                     object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
@@ -454,7 +456,7 @@ def main():
                                         label=batch_label, 
                                         shape=[FLAGS.img_size*FLAGS.img_size, ], 
                                         total_classes=FLAGS.total_classes).MIOU()
-                    f1_score_, recall_ = Measurement(predict=predict_temp,
+                    f1_score_, recall_, TP, TN, FP, FN = Measurement(predict=predict_temp,
                                             label=batch_label,
                                             shape=[FLAGS.img_size*FLAGS.img_size, ],
                                             total_classes=FLAGS.total_classes).F1_score_and_recall()
@@ -503,7 +505,7 @@ def main():
                     batch_image = tf.expand_dims(batch_images[j], 0)
                     logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
                     object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                    predict = tf.nn.sigmoid(logits[0, :, :, 0:1])
+                    predict = tf.nn.sigmoid(logits[0, :, :, 0])
                     predict = np.where(predict.numpy() >= 0.5, 1, 0)
                     predict_temp = predict
                     object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
@@ -526,7 +528,7 @@ def main():
                                         label=batch_label, 
                                         shape=[FLAGS.img_size*FLAGS.img_size, ], 
                                         total_classes=FLAGS.total_classes).MIOU()
-                    f1_score_, recall_ = Measurement(predict=predict_temp,
+                    f1_score_, recall_, TP, TN, FP, FN = Measurement(predict=predict_temp,
                                             label=batch_label,
                                             shape=[FLAGS.img_size*FLAGS.img_size, ],
                                             total_classes=FLAGS.total_classes).F1_score_and_recall()
