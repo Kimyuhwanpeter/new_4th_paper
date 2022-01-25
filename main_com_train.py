@@ -155,7 +155,7 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
     with tf.GradientTape() as tape:
         
         batch_labels = tf.reshape(labels, [-1,])
-        indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, ignore_label)),1)
+        # indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, ignore_label)),1)
         # batch_labels = tf.cast(tf.gather(batch_labels, indices), tf.float32)
 
         logits = run_model(model, images, True)
@@ -163,8 +163,8 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         predict = raw_logits[:, 0:1]
         # predict = tf.gather(raw_logits, indices)
 
-        class_im_plain = tf.reshape(class_im_plain, [-1,])
-        class_im_plain = tf.cast(tf.gather(class_im_plain, indices), tf.float32)
+        # class_im_plain = tf.reshape(class_im_plain, [-1,])
+        # class_im_plain = tf.cast(tf.gather(class_im_plain, indices), tf.float32)
 
         label_objectiness = tf.cast(tf.reshape(objectiness, [-1,]), tf.float32)
         logit_objectiness = raw_logits[:, -1]
@@ -181,16 +181,16 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         obj_loss = true_dice_loss(yes_obj_labels, yes_logit_objectiness) \
             + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness)
         
-        logit_objectiness = tf.nn.sigmoid(raw_logits[:, -1])
+        logit_objectiness_ = raw_logits[:, -1]
         
         crop_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), 1)
         crop_weed_labels = tf.gather(batch_labels, crop_weed_indices)
         crop_weed_logits = tf.gather(predict, crop_weed_indices)
-        object_logits = tf.gather(logit_objectiness, crop_weed_indices)
+        object_logits = tf.gather(logit_objectiness_, crop_weed_indices)
         crop_indices = tf.where(tf.not_equal(crop_weed_labels, 1))        
         crop_labels = tf.gather(crop_weed_labels, crop_indices)
         crop_object = tf.squeeze(tf.gather(object_logits, crop_indices), -1)
-        crop_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, crop_indices), -1), -1) * (1. - crop_object)
+        crop_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, crop_indices), -1), -1) * crop_object
         crop_labels = tf.squeeze(tf.cast(crop_labels, tf.float32), -1)
 
         weed_indices = tf.where(tf.not_equal(crop_weed_labels, 0))
