@@ -143,45 +143,50 @@ def modified_dice_loss_nonobject(y_true, y_pred):
 
 def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
 
-
     with tf.GradientTape() as tape:
-
         
         batch_labels = tf.reshape(labels, [-1,])
-        indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, ignore_label)),1)
-        # batch_labels = tf.cast(tf.gather(batch_labels, indices), tf.float32)
+        # indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, ignore_label)),1)
+        # labels_ = tf.cast(tf.gather(batch_labels, indices), tf.float32)
 
         logits = run_model(model, images, True)
         raw_logits = tf.reshape(logits, [-1, FLAGS.total_classes-1])
         predict = raw_logits[:, 0:1]
         # predict = tf.gather(raw_logits, indices)
 
-        class_im_plain = tf.reshape(class_im_plain, [-1,])
-        class_im_plain = tf.cast(tf.gather(class_im_plain, indices), tf.float32)
+        # class_im_plain = tf.reshape(class_im_plain, [-1,])
+        # class_im_plain = tf.cast(tf.gather(class_im_plain, indices), tf.float32)
 
         label_objectiness = tf.cast(tf.reshape(objectiness, [-1,]), tf.float32)
         logit_objectiness = raw_logits[:, -1]
-
+        
         no_obj_indices = tf.squeeze(tf.where(tf.equal(tf.reshape(objectiness, [-1,]), 0)),1)
         no_logit_objectiness = tf.gather(logit_objectiness, no_obj_indices)
         no_obj_labels = tf.cast(tf.gather(label_objectiness, no_obj_indices), tf.float32)
-        no_obj_loss = false_dice_loss(no_obj_labels, no_logit_objectiness) + modified_dice_loss_nonobject(no_obj_labels, no_logit_objectiness)
+        no_obj_loss = false_dice_loss(no_obj_labels, no_logit_objectiness) \
+            + modified_dice_loss_nonobject(no_obj_labels, no_logit_objectiness)
 
         obj_indices = tf.squeeze(tf.where(tf.not_equal(tf.reshape(objectiness, [-1,]), 0)),1)
         yes_logit_objectiness = tf.gather(logit_objectiness, obj_indices)
         yes_obj_labels = tf.cast(tf.gather(label_objectiness, obj_indices), tf.float32)
-        obj_loss = true_dice_loss(yes_obj_labels, yes_logit_objectiness) + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness)
-
+        obj_loss = true_dice_loss(yes_obj_labels, yes_logit_objectiness) \
+            + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness)
+        
+        logit_objectiness_ = tf.nn.sigmoid(raw_logits[:, -1])
+        
         crop_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), 1)
         crop_weed_labels = tf.gather(batch_labels, crop_weed_indices)
         crop_weed_logits = tf.gather(predict, crop_weed_indices)
-        crop_indices = tf.where(tf.not_equal(crop_weed_labels, 1))
+        object_logits = tf.gather(logit_objectiness_, crop_weed_indices)
+        crop_indices = tf.where(tf.not_equal(crop_weed_labels, 1))        
         crop_labels = tf.gather(crop_weed_labels, crop_indices)
+        crop_object = tf.squeeze(tf.gather(object_logits, crop_indices), -1)
         crop_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, crop_indices), -1), -1)
         crop_labels = tf.squeeze(tf.cast(crop_labels, tf.float32), -1)
 
         weed_indices = tf.where(tf.not_equal(crop_weed_labels, 0))
         weed_labels = tf.gather(crop_weed_labels, weed_indices)
+        weed_object = tf.squeeze(tf.gather(object_logits, weed_indices), -1)
         weed_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, weed_indices), -1), -1)
         weed_labels = tf.squeeze(tf.cast(weed_labels, tf.float32), -1)
 
@@ -189,18 +194,66 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
             + true_dice_loss(weed_labels, weed_logits) \
             + modified_dice_loss_nonobject(crop_labels, crop_logits) \
             + modified_dice_loss_object(weed_labels, weed_logits)
-        #seg_loss = dice_loss(batch_labels, tf.squeeze(predict[:, 0:1], -1)) \
-        #    + tf.nn.sigmoid_cross_entropy_with_logits(batch_labels, tf.squeeze(predict[:, 0:1], -1)) * class_im_plain
-        #seg_loss = tf.reduce_mean(seg_loss)
         
-        loss = no_obj_loss + (seg_loss + obj_loss)  # ?ɱ?!?!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        #loss = seg_loss
-        
-        # 우선 이에대해서 실험을 먼저 진행하자
-        # 뭔가 object와 crop and weed 와 최대한 연관성이 있도록 설계하자
+        loss = seg_loss + no_obj_loss + obj_loss
 
     grads = tape.gradient(loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
+
+    with tf.GradientTape() as tape:
+        
+        batch_labels = tf.reshape(labels, [-1,])
+        # indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, ignore_label)),1)
+        # labels_ = tf.cast(tf.gather(batch_labels, indices), tf.float32)
+
+        logits = run_model(model, images, True)
+        raw_logits = tf.reshape(logits, [-1, FLAGS.total_classes-1])
+        predict = raw_logits[:, 0:1]
+        # predict = tf.gather(raw_logits, indices)
+
+        # class_im_plain = tf.reshape(class_im_plain, [-1,])
+        # class_im_plain = tf.cast(tf.gather(class_im_plain, indices), tf.float32)
+
+        label_objectiness = tf.cast(tf.reshape(objectiness, [-1,]), tf.float32)
+        logit_objectiness = raw_logits[:, -1]
+        
+        no_obj_indices = tf.squeeze(tf.where(tf.equal(tf.reshape(objectiness, [-1,]), 0)),1)
+        no_logit_objectiness = tf.gather(logit_objectiness, no_obj_indices)
+        no_obj_labels = tf.cast(tf.gather(label_objectiness, no_obj_indices), tf.float32)
+        no_obj_loss = false_dice_loss(no_obj_labels, no_logit_objectiness)
+
+        obj_indices = tf.squeeze(tf.where(tf.not_equal(tf.reshape(objectiness, [-1,]), 0)),1)
+        yes_logit_objectiness = tf.gather(logit_objectiness, obj_indices)
+        yes_obj_labels = tf.cast(tf.gather(label_objectiness, obj_indices), tf.float32)
+        obj_loss = true_dice_loss(yes_obj_labels, yes_logit_objectiness)
+        
+        logit_objectiness_ = tf.nn.sigmoid(raw_logits[:, -1])
+        
+        crop_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), 1)
+        crop_weed_labels = tf.gather(batch_labels, crop_weed_indices)
+        crop_weed_logits = tf.gather(predict, crop_weed_indices)
+        object_logits = tf.gather(logit_objectiness_, crop_weed_indices)
+        crop_indices = tf.where(tf.not_equal(crop_weed_labels, 1))        
+        crop_labels = tf.gather(crop_weed_labels, crop_indices)
+        crop_object = tf.squeeze(tf.gather(object_logits, crop_indices), -1)
+        crop_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, crop_indices), -1), -1)
+        crop_labels = tf.squeeze(tf.cast(crop_labels, tf.float32), -1)
+
+        weed_indices = tf.where(tf.not_equal(crop_weed_labels, 0))
+        weed_labels = tf.gather(crop_weed_labels, weed_indices)
+        weed_object = tf.squeeze(tf.gather(object_logits, weed_indices), -1)
+        weed_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, weed_indices), -1), -1)
+        weed_labels = tf.squeeze(tf.cast(weed_labels, tf.float32), -1)
+
+        seg_loss = false_dice_loss(crop_labels, crop_logits) \
+            + true_dice_loss(weed_labels, weed_logits) \
+        
+        loss = seg_loss + no_obj_loss + obj_loss
+
+    grads2 = tape.gradient(loss, model.trainable_variables)
+    new_grads = lambda x,y:[(x[i] + y[i]) / 2. for i in range(len(grads2))]    # gradient sum?? 
+    
+    optim.apply_gradients(zip(new_grads(grads, grads2), model.trainable_variables))
 
     return loss
 
