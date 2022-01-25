@@ -356,24 +356,20 @@ def main():
                     batch_image = tf.expand_dims(batch_images[j], 0)
                     logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
                     object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                    predict = tf.nn.sigmoid(logits[0, :, :, 0])
-                    predict = np.where(predict.numpy() >= 0.5, 1, 0)
-                    predict_temp = predict
                     object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
-                    onject_predict_axis = np.where(object_predict_predict==2)   # 2 ???漺???? ?ִ? ?ุ ?????? ??
-                    predict_temp[onject_predict_axis] = 2
-
-                    #batch_image = tf.expand_dims(batch_images[j], 0)
-                    #predict = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                    #predict = tf.nn.sigmoid(predict[0, :, :, 0:1])
-                    #predict = np.where(predict.numpy() >= 0.5, 1, 0)
-
+                    object_indices = np.where(object_predict_predict == 1)
+                    non_object_indices = np.where(object_predict_predict == 2)
+                    predict = tf.nn.sigmoid(logits[0, :, :, 0]).numpy()
+                    predict[object_indices] = np.where(predict[object_indices] >= 0.5, 1, 0)
+                    predict[non_object_indices] = 2
+                    predict_temp = predict
+                    predict_temp = np.array(predict, np.int32)
+                    
                     batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
                     batch_label = np.where(batch_label == 255, 0, batch_label)
                     batch_label = np.where(batch_label == 128, 1, batch_label)
                     ignore_label_axis = np.where(batch_label==2)   # ?????? x,y axis?? ????!
-                    #predict[ignore_label_axis] = 2
 
                     miou_, crop_iou_, weed_iou_ = Measurement(predict=predict_temp,
                                         label=batch_label, 
@@ -433,24 +429,18 @@ def main():
                     batch_image = tf.expand_dims(batch_images[j], 0)
                     logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
                     object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                    predict = tf.nn.sigmoid(logits[0, :, :, 0])
-                    predict = np.where(predict.numpy() >= 0.5, 1, 0)
-                    predict_temp = predict
                     object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
-                    onject_predict_axis = np.where(object_predict_predict==2)   # 2 ???漺???? ?ִ? ?ุ ?????? ??
-                    predict_temp[onject_predict_axis] = 2
-
-                    #batch_image = tf.expand_dims(batch_images[j], 0)
-                    #predict = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                    #predict = tf.nn.sigmoid(predict[0, :, :, 0:1])
-                    #predict = np.where(predict.numpy() >= 0.5, 1, 0)
+                    object_indices = np.where(object_predict_predict == 1)
+                    non_object_indices = np.where(object_predict_predict == 2)
+                    predict = tf.nn.sigmoid(logits[0, :, :, 0]).numpy()
+                    predict[object_indices] = np.where(predict[object_indices] >= 0.5, 1, 0)
+                    predict[non_object_indices] = 2
+                    predict_temp = np.array(predict, np.int32)
 
                     batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
                     batch_label = np.where(batch_label == 255, 0, batch_label)
                     batch_label = np.where(batch_label == 128, 1, batch_label)
-                    ignore_label_axis = np.where(batch_label==2)   # ?????? x,y axis?? ????!
-                    #predict[ignore_label_axis] = 2
 
                     miou_, crop_iou_, weed_iou_ = Measurement(predict=predict_temp,
                                         label=batch_label, 
@@ -505,24 +495,19 @@ def main():
                     batch_image = tf.expand_dims(batch_images[j], 0)
                     logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
                     object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                    predict = tf.nn.sigmoid(logits[0, :, :, 0])
-                    predict = np.where(predict.numpy() >= 0.5, 1, 0)
-                    predict_temp = predict
                     object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
-                    onject_predict_axis = np.where(object_predict_predict==2)   # 2 ???漺???? ?ִ? ?ุ ?????? ??
-                    predict_temp[onject_predict_axis] = 2
-
-                    #batch_image = tf.expand_dims(batch_images[j], 0)
-                    #predict = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                    #predict = tf.nn.sigmoid(predict[0, :, :, 0:1])
-                    #predict = np.where(predict.numpy() >= 0.5, 1, 0)
+                    object_indices = np.where(object_predict_predict == 1)
+                    non_object_indices = np.where(object_predict_predict == 2)
+                    predict = tf.nn.sigmoid(logits[0, :, :, 0]).numpy()
+                    predict[object_indices] = np.where(predict[object_indices] >= 0.5, 1, 0)
+                    predict[non_object_indices] = 2
+                    predict_temp = predict
+                    predict_temp = np.array(predict, np.int32)
 
                     batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
                     batch_label = np.where(batch_label == 255, 0, batch_label)
                     batch_label = np.where(batch_label == 128, 1, batch_label)
-                    ignore_label_axis = np.where(batch_label==2)   # ?????? x,y axis?? ????!
-                    #predict[ignore_label_axis] = 2
 
                     miou_, crop_iou_, weed_iou_ = Measurement(predict=predict_temp,
                                         label=batch_label, 
@@ -602,25 +587,20 @@ def main():
                 batch_image = tf.expand_dims(batch_images[j], 0)
                 logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
                 object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                predict = tf.nn.sigmoid(logits[0, :, :, 0:1])
-                predict = np.where(predict.numpy() >= 0.5, 1, 0)
-                predict_temp = predict
-                image = predict
                 object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
-                onject_predict_axis = np.where(object_predict_predict==2)   # 2 ???漺???? ?ִ? ?ุ ?????? ??
-                predict_temp[onject_predict_axis] = 2
-
-                #batch_image = tf.expand_dims(batch_images[j], 0)
-                #predict = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                #predict = tf.nn.sigmoid(predict[0, :, :, 0:1])
-                #predict = np.where(predict.numpy() >= 0.5, 1, 0)
+                object_indices = np.where(object_predict_predict == 1)
+                non_object_indices = np.where(object_predict_predict == 2)
+                predict = tf.nn.sigmoid(logits[0, :, :, 0]).numpy()
+                predict[object_indices] = np.where(predict[object_indices] >= 0.5, 1, 0)
+                predict[non_object_indices] = 2
+                predict_temp = predict
+                predict_temp = np.array(predict, np.int32)
 
                 batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
                 batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
                 batch_label = np.where(batch_label == 255, 0, batch_label)
                 batch_label = np.where(batch_label == 128, 1, batch_label)
                 ignore_label_axis = np.where(batch_label==2)   # ?????? x,y axis?? ????!
-                #predict[ignore_label_axis] = 2
 
                 predict_temp1 = predict_temp
                 batch_label1 = batch_label
