@@ -181,7 +181,7 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         obj_loss = true_dice_loss(yes_obj_labels, yes_logit_objectiness) \
             + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness)
         
-        logit_objectiness_ = raw_logits[:, -1]
+        logit_objectiness_ = tf.nn.sigmoid(raw_logits[:, -1])
         
         crop_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), 1)
         crop_weed_labels = tf.gather(batch_labels, crop_weed_indices)
@@ -190,7 +190,7 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         crop_indices = tf.where(tf.not_equal(crop_weed_labels, 1))        
         crop_labels = tf.gather(crop_weed_labels, crop_indices)
         crop_object = tf.squeeze(tf.gather(object_logits, crop_indices), -1)
-        crop_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, crop_indices), -1), -1) * crop_object
+        crop_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, crop_indices), -1), -1) * (1. - crop_object)
         crop_labels = tf.squeeze(tf.cast(crop_labels, tf.float32), -1)
 
         weed_indices = tf.where(tf.not_equal(crop_weed_labels, 0))
