@@ -1,5 +1,4 @@
 # -*- coding:utf-8 -*-
-from charset_normalizer import from_bytes
 from modified_deeplab_V3 import *
 from PFB_measurement import Measurement
 from random import shuffle, random
@@ -37,19 +36,11 @@ FLAGS = easydict.EasyDict({"img_size": 512,
 
                            "batch_size": 4,
 
-                           "sample_images": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/BoniRob/sample_images",
+                           "sample_images": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/sample_images",
 
-                           "save_checkpoint": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/BoniRob/checkpoint",
+                           "save_checkpoint": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/checkpoint",
 
-                           "save_print": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/BoniRob/train_out.txt",
-
-                           "train_loss_graphs": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_loss.txt",
-
-                           "train_acc_graphs": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_acc.txt",
-
-                           "val_loss_graphs": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/val_loss.txt",
-
-                           "val_acc_graphs": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/val_acc.txt",
+                           "save_print": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/train_out.txt",
 
                            "train": True})
 
@@ -107,9 +98,13 @@ def test_func(image_list, label_list):
 
     return img, lab
 
-@tf.function
+# @tf.function
 def run_model(model, images, training=True):
-    return model(images, training=training)
+    if training:
+        a = model(images, training=training) 
+    else:
+        a = model.predict(images)
+    return a
 
 def dice_loss(y_true, y_pred):
     y_true = tf.cast(y_true, tf.float32)
@@ -162,70 +157,73 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         
         batch_labels = tf.reshape(labels, [-1,])
         # indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, ignore_label)),1)
-        # labels_ = tf.cast(tf.gather(batch_labels, indices), tf.float32)
+        # batch_labels = tf.cast(tf.gather(batch_labels, indices), tf.float32)
 
-        logits = run_model(model, images, True)
-        raw_logits = tf.reshape(logits, [-1, FLAGS.total_classes-1])
-        predict = raw_logits[:, 0:1]
-        # predict = tf.gather(raw_logits, indices)
-
-        # class_im_plain = tf.reshape(class_im_plain, [-1,])
-        # class_im_plain = tf.cast(tf.gather(class_im_plain, indices), tf.float32)
+        object_output, crop_output, weed_output = run_model(model, images, True)
 
         label_objectiness = tf.cast(tf.reshape(objectiness, [-1,]), tf.float32)
-        logit_objectiness = raw_logits[:, -1]
+        logit_objectiness = tf.reshape(object_output, [-1,])
+        crop_output = tf.reshape(crop_output, [-1, 1])     # reshape !!!!!!
+        weed_output = tf.reshape(weed_output, [-1, 1])     # reshape !!!!!!
         
         no_obj_indices = tf.squeeze(tf.where(tf.equal(tf.reshape(objectiness, [-1,]), 0)),1)
         no_logit_objectiness = tf.gather(logit_objectiness, no_obj_indices)
         no_obj_labels = tf.cast(tf.gather(label_objectiness, no_obj_indices), tf.float32)
-        no_obj_loss = false_dice_loss(no_obj_labels, no_logit_objectiness) \
-            + modified_dice_loss_nonobject(no_obj_labels, no_logit_objectiness)
+        # no_obj_loss = false_dice_loss(no_obj_labels, no_logit_objectiness) \
+        #     + modified_dice_loss_nonobject(no_obj_labels, no_logit_objectiness)
+        no_obj_loss = false_dice_loss(no_obj_labels, no_logit_objectiness)
 
         obj_indices = tf.squeeze(tf.where(tf.not_equal(tf.reshape(objectiness, [-1,]), 0)),1)
         yes_logit_objectiness = tf.gather(logit_objectiness, obj_indices)
         yes_obj_labels = tf.cast(tf.gather(label_objectiness, obj_indices), tf.float32)
-        obj_loss = true_dice_loss(yes_obj_labels, yes_logit_objectiness) \
-            + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness)
-        
-        logit_objectiness_ = tf.nn.sigmoid(raw_logits[:, -1])
-        
+        # obj_loss = true_dice_loss(yes_obj_labels, yes_logit_objectiness) \
+        #     + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness)
+        obj_loss = true_dice_loss(yes_obj_labels, yes_logit_objectiness)
+
+        ############## crop loss ############## 판별: 0.5 이상이면 crop
         crop_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), 1)
         crop_weed_labels = tf.gather(batch_labels, crop_weed_indices)
-        crop_weed_logits = tf.gather(predict, crop_weed_indices)
-        crop_indices = tf.where(tf.not_equal(crop_weed_labels, 1))        
+        crop_weed_logits = tf.gather(crop_output, crop_weed_indices)
+        crop_indices = tf.where(tf.not_equal(crop_weed_labels, 1))
         crop_labels = tf.gather(crop_weed_labels, crop_indices)
         crop_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, crop_indices), -1), -1)
-        crop_labels = tf.squeeze(tf.cast(crop_labels, tf.float32), -1)
+        crop_labels = tf.squeeze(tf.ones_like(crop_labels, dtype=tf.float32), -1)
+        # crop_dice_loss  = true_dice_loss(crop_labels, crop_logits) + modified_dice_loss_object(crop_labels, crop_logits)
+        crop_dice_loss  = true_dice_loss(crop_labels, crop_logits)
+        #######################################
 
+        ############## non-crop loss ##############  판별: 0.5 미만이면 background
+        non_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), 1)
+        non_crop_labels = tf.gather(batch_labels, non_crop_indices)
+        non_crop_logits = tf.squeeze(tf.gather(crop_output, non_crop_indices), -1)
+        non_crop_labels = tf.zeros_like(non_crop_labels, dtype=tf.float32)
+        # non_crop_dice_loss = false_dice_loss(non_crop_labels, non_crop_logits) + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits)
+        non_crop_dice_loss = false_dice_loss(non_crop_labels, non_crop_logits)
+        ###########################################
+
+        ############## weed loss ############## 판별: 0.5 이상이면 weed
+        crop_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), 1)
+        crop_weed_labels = tf.gather(batch_labels, crop_weed_indices)
+        crop_weed_logits = tf.gather(weed_output, crop_weed_indices)
         weed_indices = tf.where(tf.not_equal(crop_weed_labels, 0))
         weed_labels = tf.gather(crop_weed_labels, weed_indices)
         weed_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, weed_indices), -1), -1)
-        weed_labels = tf.squeeze(tf.cast(weed_labels, tf.float32), -1)
+        weed_labels = tf.squeeze(tf.ones_like(weed_labels, dtype=tf.float32), -1)
+        # weed_dice_loss  = true_dice_loss(weed_labels, weed_logits) + modified_dice_loss_object(weed_labels, weed_logits)
+        weed_dice_loss  = true_dice_loss(weed_labels, weed_logits)
+        #######################################
 
-        # no_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
-        # no_crop_labels = tf.gather(batch_labels, no_crop_indices)
-        # no_crop_labels = tf.ones_like(no_crop_labels, dtype=tf.float32)
-        # no_crop_logits = tf.squeeze(tf.gather(predict, no_crop_indices), -1)
-        # no_crop_loss = true_dice_loss(no_crop_labels, no_crop_logits)
-
-        # no_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
-        # no_weed_labels = tf.gather(batch_labels, no_weed_indices)
-        # no_weed_labels = tf.zeros_like(no_weed_labels, dtype=tf.float32)
-        # no_weed_logits = tf.squeeze(tf.gather(predict, no_weed_indices), -1)
-        # no_weed_loss = false_dice_loss(no_weed_labels, no_weed_logits)
-        
-        if len(crop_labels) < len(weed_labels):
-            seg_loss = false_dice_loss(crop_weed_labels, crop_weed_logits[:, -1]) + modified_dice_loss_nonobject(crop_weed_labels, crop_weed_logits[:, -1])
-        elif len(crop_labels) > len(weed_labels):
-            seg_loss = true_dice_loss(crop_weed_labels, crop_weed_logits[:, -1]) + modified_dice_loss_object(crop_weed_labels, crop_weed_logits[:, -1])
-        else:
-            seg_loss = false_dice_loss(crop_weed_labels, crop_weed_logits[:, -1]) \
-                + true_dice_loss(crop_weed_labels, crop_weed_logits[:, -1]) \
-                + modified_dice_loss_nonobject(crop_weed_labels, crop_weed_logits[:, -1]) \
-                + modified_dice_loss_object(crop_weed_labels, crop_weed_logits[:, -1])
+        ############## non-weed loss ##############  판별: 0.5 미만이면 background
+        non_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), 1)
+        non_weed_labels = tf.gather(batch_labels, non_weed_indices)
+        non_weed_logits = tf.squeeze(tf.gather(weed_output, non_weed_indices), -1)
+        non_weed_labels = tf.zeros_like(non_weed_labels, dtype=tf.float32)
+        # non_weed_dice_loss = false_dice_loss(non_weed_labels, non_weed_logits) + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits)
+        non_weed_dice_loss = false_dice_loss(non_weed_labels, non_weed_logits)
+        ###########################################
         
         # how about no weed and no crop?!?!?!?!?
-        loss = seg_loss + no_obj_loss + obj_loss
+        loss = no_obj_loss + obj_loss + crop_dice_loss + non_crop_dice_loss + weed_dice_loss + non_weed_dice_loss
 
     grads = tape.gradient(loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
@@ -236,9 +234,73 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
 def main():
     tf.keras.backend.clear_session()
     model = DeepLabV3Plus(FLAGS.img_size, FLAGS.img_size, 34)
+    _, x_a = model.output
     out = model.get_layer("activation_decoder_2_upsample").output
-    out = tf.keras.layers.Conv2D(FLAGS.total_classes-1, (1,1), name="output_layer")(out)
-    model = tf.keras.Model(inputs=model.input, outputs=out)
+    out1 = tf.keras.layers.Conv2D(1, (1,1), name="output_layer1")(out)
+    model1 = tf.keras.Model(inputs=model.input, outputs=out1)
+    
+    ################################################################################################
+    x_b = model.get_layer('activation_9').output
+    x_b = Conv2D(filters=48, kernel_size=1, padding='same',
+                 kernel_initializer='he_normal', name='low_level_projection2', use_bias=False)(x_b)
+    x_b = BatchNormalization(name='bn_low_level_projection2')(x_b)
+    x_b = Activation('relu', name='low_level_activation2')(x_b)
+
+    x = concatenate([x_a, x_b], name='decoder_concat2')
+
+    x = Conv2D(filters=256, kernel_size=3, padding='same', activation='relu',
+               kernel_initializer='he_normal', name='decoder_conv2d_3', use_bias=False)(x)
+    x = BatchNormalization(name='bn_decoder_3')(x)
+    x = Activation('relu', name='activation_decoder_3')(x)
+
+    x = Conv2D(filters=256, kernel_size=3, padding='same', activation='relu',
+               kernel_initializer='he_normal', name='decoder_conv2d_4', use_bias=False)(x)
+    x = BatchNormalization(name='bn_decoder_4')(x)
+    x = Activation('relu', name='activation_decoder_4')(x)
+    x = Upsample(x, [FLAGS.img_size, FLAGS.img_size])
+
+    out2 = Conv2D(1, (1, 1), name='output_layer2')(x)
+    model2 = tf.keras.Model(inputs=model.input, outputs=out2)
+    
+    model2.get_layer("low_level_projection2").set_weights(model1.get_layer("low_level_projection").get_weights())
+    model2.get_layer("bn_low_level_projection2").set_weights(model1.get_layer("bn_low_level_projection").get_weights())
+    model2.get_layer("decoder_conv2d_3").set_weights(model1.get_layer("decoder_conv2d_1").get_weights())
+    model2.get_layer("bn_decoder_3").set_weights(model1.get_layer("bn_decoder_1").get_weights())
+    model2.get_layer("decoder_conv2d_4").set_weights(model1.get_layer("decoder_conv2d_2").get_weights())
+    model2.get_layer("bn_decoder_4").set_weights(model1.get_layer("bn_decoder_2").get_weights())
+    ################################################################################################
+    
+    ################################################################################################
+    x_b = model.get_layer('activation_9').output
+    x_b = Conv2D(filters=48, kernel_size=1, padding='same',
+                 kernel_initializer='he_normal', name='low_level_projection3', use_bias=False)(x_b)
+    x_b = BatchNormalization(name='bn_low_level_projection3')(x_b)
+    x_b = Activation('relu', name='low_level_activation3')(x_b)
+
+    x = concatenate([x_a, x_b], name='decoder_concat3')
+    
+    x = Conv2D(filters=256, kernel_size=3, padding='same', activation='relu',
+               kernel_initializer='he_normal', name='decoder_conv2d_5', use_bias=False)(x)
+    x = BatchNormalization(name='bn_decoder_5')(x)
+    x = Activation('relu', name='activation_decoder_5')(x)
+
+    x = Conv2D(filters=256, kernel_size=3, padding='same', activation='relu',
+               kernel_initializer='he_normal', name='decoder_conv2d_6', use_bias=False)(x)
+    x = BatchNormalization(name='bn_decoder_6')(x)
+    x = Activation('relu', name='activation_decoder_6')(x)
+    x = Upsample(x, [FLAGS.img_size, FLAGS.img_size])
+    out3 = Conv2D(1, (1, 1), name='output_layer3')(x)
+    model3 = tf.keras.Model(inputs=model.input, outputs=out3)
+
+    model3.get_layer("low_level_projection3").set_weights(model1.get_layer("low_level_projection").get_weights())
+    model3.get_layer("bn_low_level_projection3").set_weights(model1.get_layer("bn_low_level_projection").get_weights())
+    model3.get_layer("decoder_conv2d_5").set_weights(model1.get_layer("decoder_conv2d_1").get_weights())
+    model3.get_layer("bn_decoder_5").set_weights(model1.get_layer("bn_decoder_1").get_weights())
+    model3.get_layer("decoder_conv2d_6").set_weights(model1.get_layer("decoder_conv2d_2").get_weights())
+    model3.get_layer("bn_decoder_6").set_weights(model1.get_layer("bn_decoder_2").get_weights())
+    ################################################################################################
+    
+    model = tf.keras.Model(inputs=model.input, outputs=[out1, out2, out3])
     
     for layer in model.layers:
         if isinstance(layer, tf.keras.layers.BatchNormalization):
@@ -329,18 +391,44 @@ def main():
 
                 if count % 100 == 0:
 
-                    logits = run_model(model, batch_images, False)
-                    object_images = tf.nn.sigmoid(logits[:, :, :, 1])
-                    images = tf.nn.sigmoid(logits[:, :, :, 0:1])
+                    object_output, crop_output, weed_output = run_model(model, batch_images, False)
+                    object_output = tf.nn.sigmoid(object_output[:, :, :, 0])
+                    crop_images = tf.nn.sigmoid(crop_output[:, :, :, 0])
+                    weed_images = tf.nn.sigmoid(weed_output[:, :, :, 0])
                     for i in range(FLAGS.batch_size):
-                        object_image = object_images[i]
-                        image = images[i]
+                        object_image = object_output[i]
+                        crop_image = crop_images[i].numpy()
+                        weed_image = weed_images[i].numpy()
                         label = batch_labels[i]
-                        image = np.where(image.numpy() >= 0.5, 1, 0)
-                        temp_image = image
-                        object_image_predict = np.where(object_image.numpy() >= 0.5, 1, 2)
-                        object_image_axis = np.where(object_image_predict==2)
-                        temp_image[object_image_axis] = 2
+
+                        object_predict_predict = np.where(object_image.numpy() > 0.5, 1, 4)
+                        object_indices = np.where(object_predict_predict == 1)
+                        non_object_indices = np.where(object_predict_predict == 4)
+
+                        crop_image[object_indices] = np.where(crop_image[object_indices] > 0.5, 1, 0)
+                        crop_image[non_object_indices] = np.where(crop_image[non_object_indices] <= 0.5, 0, 1)
+                        weed_image[object_indices] = np.where(weed_image[object_indices] > 0.5, 2, 0)
+                        weed_image[non_object_indices] = np.where(weed_image[non_object_indices] <= 0.5, 0, 2)
+                        crop_weed_predict = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
+
+                        crop_weed_predict = np.where(crop_image + weed_image == 0, 0, crop_weed_predict)
+                        crop_weed_predict = np.where(crop_image + weed_image == 3, 0, crop_weed_predict)
+                        crop_weed_predict = np.where(crop_image + weed_image == 1, 1, crop_weed_predict)
+                        crop_weed_predict = np.where(crop_image + weed_image == 2, 2, crop_weed_predict)
+                        # crop_weed_predict[non_object_indices] = 0   # 0-background, 1-crop, 2-weed --> need to change to 0-crop, 1-weed, 2-background
+
+                        crop_indices = np.where(crop_weed_predict == 1)
+                        weed_indices = np.where(crop_weed_predict == 2)
+                        back_indices = np.where(crop_weed_predict == 0)
+
+                        crop_weed_predict[crop_indices] = 0
+                        crop_weed_predict[weed_indices] = 1
+                        crop_weed_predict[back_indices] = 2
+
+                        temp_image = crop_weed_predict
+                        temp_image = np.array(temp_image, np.int32)
+                        temp_image = np.expand_dims(temp_image, -1)
+                        image = temp_image
 
 
                         pred_mask_color = color_map[temp_image]  # ?????׸?ó?? ?Ұ?!
@@ -377,22 +465,41 @@ def main():
                 batch_labels = tf.squeeze(batch_labels, -1)
                 for j in range(FLAGS.batch_size):
                     batch_image = tf.expand_dims(batch_images[j], 0)
-                    logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                    object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                    object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
+                    object_output, crop_output, weed_output = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
+                    object_predict = tf.nn.sigmoid(object_output[0, :, :, 0])
+                    object_predict_predict = np.where(object_predict.numpy() > 0.5, 1, 4)
                     object_indices = np.where(object_predict_predict == 1)
-                    non_object_indices = np.where(object_predict_predict == 2)
-                    predict = tf.nn.sigmoid(logits[0, :, :, 0]).numpy()
-                    predict[object_indices] = np.where(predict[object_indices] >= 0.5, 1, 0)
-                    predict[non_object_indices] = 2
-                    predict_temp = predict
-                    predict_temp = np.array(predict, np.int32)
+                    non_object_indices = np.where(object_predict_predict == 4)
+
+                    crop_predict = tf.nn.sigmoid(crop_output[0, :, :, 0]).numpy()
+                    crop_predict[object_indices] = np.where(crop_predict[object_indices] > 0.5, 1, 0)
+                    crop_predict[non_object_indices] = np.where(crop_predict[non_object_indices] <= 0.5, 0, 1)
+                    weed_predict = tf.nn.sigmoid(weed_output[0, :, :, 0]).numpy()
+                    weed_predict[object_indices] = np.where(weed_predict[object_indices] > 0.5, 2, 0)
+                    weed_predict[non_object_indices] = np.where(weed_predict[non_object_indices] <= 0.5, 0, 2)
+                    crop_weed_predict = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
+
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 0, 0, crop_weed_predict)
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 3, 0, crop_weed_predict)
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 1, 1, crop_weed_predict)
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 2, 2, crop_weed_predict)
+                    # crop_weed_predict[non_object_indices] = 0   # 0-background, 1-crop, 2-weed --> need to change to 0-crop, 1-weed, 2-background
+
+                    crop_indices = np.where(crop_weed_predict == 1)
+                    weed_indices = np.where(crop_weed_predict == 2)
+                    back_indices = np.where(crop_weed_predict == 0)
+
+                    crop_weed_predict[crop_indices] = 0
+                    crop_weed_predict[weed_indices] = 1
+                    crop_weed_predict[back_indices] = 2
+
+                    predict_temp = crop_weed_predict
+                    predict_temp = np.array(predict_temp, np.int32)
                     
                     batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
                     batch_label = np.where(batch_label == 255, 0, batch_label)
                     batch_label = np.where(batch_label == 128, 1, batch_label)
-                    ignore_label_axis = np.where(batch_label==2)   # ?????? x,y axis?? ????!
 
                     miou_, crop_iou_, weed_iou_ = Measurement(predict=predict_temp,
                                         label=batch_label, 
@@ -450,15 +557,36 @@ def main():
                 batch_labels = tf.squeeze(batch_labels, -1)
                 for j in range(1):
                     batch_image = tf.expand_dims(batch_images[j], 0)
-                    logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                    object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                    object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
+                    object_output, crop_output, weed_output = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
+                    object_predict = tf.nn.sigmoid(object_output[0, :, :, 0])
+                    object_predict_predict = np.where(object_predict.numpy() > 0.5, 1, 4)
                     object_indices = np.where(object_predict_predict == 1)
-                    non_object_indices = np.where(object_predict_predict == 2)
-                    predict = tf.nn.sigmoid(logits[0, :, :, 0]).numpy()
-                    predict[object_indices] = np.where(predict[object_indices] >= 0.5, 1, 0)
-                    predict[non_object_indices] = 2
-                    predict_temp = np.array(predict, np.int32)
+                    non_object_indices = np.where(object_predict_predict == 4)
+
+                    crop_predict = tf.nn.sigmoid(crop_output[0, :, :, 0]).numpy()
+                    crop_predict[object_indices] = np.where(crop_predict[object_indices] > 0.5, 1, 0)
+                    crop_predict[non_object_indices] = np.where(crop_predict[non_object_indices] <= 0.5, 0, 1)
+                    weed_predict = tf.nn.sigmoid(weed_output[0, :, :, 0]).numpy()
+                    weed_predict[object_indices] = np.where(weed_predict[object_indices] > 0.5, 2, 0)
+                    weed_predict[non_object_indices] = np.where(weed_predict[non_object_indices] <= 0.5, 0, 2)
+                    crop_weed_predict = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
+
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 0, 0, crop_weed_predict)
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 3, 0, crop_weed_predict)
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 1, 1, crop_weed_predict)
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 2, 2, crop_weed_predict)
+                    # crop_weed_predict[non_object_indices] = 0   # 0-background, 1-crop, 2-weed --> need to change to 0-crop, 1-weed, 2-background
+
+                    crop_indices = np.where(crop_weed_predict == 1)
+                    weed_indices = np.where(crop_weed_predict == 2)
+                    back_indices = np.where(crop_weed_predict == 0)
+
+                    crop_weed_predict[crop_indices] = 0
+                    crop_weed_predict[weed_indices] = 1
+                    crop_weed_predict[back_indices] = 2
+
+                    predict_temp = crop_weed_predict
+                    predict_temp = np.array(predict_temp, np.int32)
 
                     batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
@@ -516,16 +644,36 @@ def main():
                 batch_labels = tf.squeeze(batch_labels, -1)
                 for j in range(1):
                     batch_image = tf.expand_dims(batch_images[j], 0)
-                    logits = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                    object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                    object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
+                    object_output, crop_output, weed_output = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
+                    object_predict = tf.nn.sigmoid(object_output[0, :, :, 0])
+                    object_predict_predict = np.where(object_predict.numpy() > 0.5, 1, 4)
                     object_indices = np.where(object_predict_predict == 1)
-                    non_object_indices = np.where(object_predict_predict == 2)
-                    predict = tf.nn.sigmoid(logits[0, :, :, 0]).numpy()
-                    predict[object_indices] = np.where(predict[object_indices] >= 0.5, 1, 0)
-                    predict[non_object_indices] = 2
-                    predict_temp = predict
-                    predict_temp = np.array(predict, np.int32)
+                    non_object_indices = np.where(object_predict_predict == 4)
+
+                    crop_predict = tf.nn.sigmoid(crop_output[0, :, :, 0]).numpy()
+                    crop_predict[object_indices] = np.where(crop_predict[object_indices] > 0.5, 1, 0)
+                    crop_predict[non_object_indices] = np.where(crop_predict[non_object_indices] <= 0.5, 0, 1)
+                    weed_predict = tf.nn.sigmoid(weed_output[0, :, :, 0]).numpy()
+                    weed_predict[object_indices] = np.where(weed_predict[object_indices] > 0.5, 2, 0)
+                    weed_predict[non_object_indices] = np.where(weed_predict[non_object_indices] <= 0.5, 0, 2)
+                    crop_weed_predict = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
+
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 0, 0, crop_weed_predict)
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 3, 0, crop_weed_predict)
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 1, 1, crop_weed_predict)
+                    crop_weed_predict = np.where(crop_predict + weed_predict == 2, 2, crop_weed_predict)
+                    # crop_weed_predict[non_object_indices] = 0   # 0-background, 1-crop, 2-weed --> need to change to 0-crop, 1-weed, 2-background
+
+                    crop_indices = np.where(crop_weed_predict == 1)
+                    weed_indices = np.where(crop_weed_predict == 2)
+                    back_indices = np.where(crop_weed_predict == 0)
+
+                    crop_weed_predict[crop_indices] = 0
+                    crop_weed_predict[weed_indices] = 1
+                    crop_weed_predict[back_indices] = 2
+
+                    predict_temp = crop_weed_predict
+                    predict_temp = np.array(predict_temp, np.int32)
 
                     batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
