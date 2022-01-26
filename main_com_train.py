@@ -202,32 +202,27 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         weed_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, weed_indices), -1), -1)
         weed_labels = tf.squeeze(tf.cast(weed_labels, tf.float32), -1)
 
-        no_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
-        no_crop_labels = tf.gather(batch_labels, no_crop_indices)
-        no_crop_labels = tf.ones_like(no_crop_labels, dtype=tf.float32)
-        no_crop_logits = tf.squeeze(tf.gather(predict, no_crop_indices), -1)
-        no_crop_loss = true_dice_loss(no_crop_labels, no_crop_logits)
+        # no_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
+        # no_crop_labels = tf.gather(batch_labels, no_crop_indices)
+        # no_crop_labels = tf.ones_like(no_crop_labels, dtype=tf.float32)
+        # no_crop_logits = tf.squeeze(tf.gather(predict, no_crop_indices), -1)
+        # no_crop_loss = true_dice_loss(no_crop_labels, no_crop_logits)
 
-        no_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
-        no_weed_labels = tf.gather(batch_labels, no_weed_indices)
-        no_weed_labels = tf.zeros_like(no_weed_labels, dtype=tf.float32)
-        no_weed_logits = tf.squeeze(tf.gather(predict, no_weed_indices), -1)
-        no_weed_loss = false_dice_loss(no_weed_labels, no_weed_logits)
+        # no_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
+        # no_weed_labels = tf.gather(batch_labels, no_weed_indices)
+        # no_weed_labels = tf.zeros_like(no_weed_labels, dtype=tf.float32)
+        # no_weed_logits = tf.squeeze(tf.gather(predict, no_weed_indices), -1)
+        # no_weed_loss = false_dice_loss(no_weed_labels, no_weed_logits)
         
         if len(crop_labels) < len(weed_labels):
-            seg_loss = false_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
-                + no_weed_loss
-                # + modified_dice_loss_nonobject(crop_weed_labels, tf.squeeze(crop_weed_logits, -1))
+            seg_loss = false_dice_loss(crop_weed_labels, crop_weed_logits[:, -1]) + modified_dice_loss_nonobject(crop_weed_labels, crop_weed_logits[:, -1])
         elif len(crop_labels) > len(weed_labels):
-            seg_loss = true_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
-                + no_crop_loss
-                # + modified_dice_loss_object(crop_weed_labels, tf.squeeze(crop_weed_logits, -1))
+            seg_loss = true_dice_loss(crop_weed_labels, crop_weed_logits[:, -1]) + modified_dice_loss_object(crop_weed_labels, crop_weed_logits[:, -1])
         else:
-            seg_loss = false_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
-                + true_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
-                + no_weed_loss + no_crop_loss
-                # + modified_dice_loss_nonobject(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
-                # + modified_dice_loss_object(crop_weed_labels, tf.squeeze(crop_weed_logits, -1))
+            seg_loss = false_dice_loss(crop_weed_labels, crop_weed_logits[:, -1]) \
+                + true_dice_loss(crop_weed_labels, crop_weed_logits[:, -1]) \
+                + modified_dice_loss_nonobject(crop_weed_labels, crop_weed_logits[:, -1]) \
+                + modified_dice_loss_object(crop_weed_labels, crop_weed_logits[:, -1])
         
         # how about no weed and no crop?!?!?!?!?
         loss = seg_loss + no_obj_loss + obj_loss
