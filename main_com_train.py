@@ -54,7 +54,13 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            "train": True})
 
 
+lr_decayed_fn = (
+  tf.keras.optimizers.schedules.CosineDecayRestarts(
+      FLAGS.lr,
+      200))
+
 optim = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.5)
+optim2 = tf.keras.optimizers.Adam(lr_decayed_fn, beta_1=0.5)
 color_map = np.array([[255, 0, 0], [0, 0, 255], [0,0,0]], dtype=np.uint8)
 
 def tr_func(image_list, label_list):
@@ -186,72 +192,49 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         crop_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), 1)
         crop_weed_labels = tf.gather(batch_labels, crop_weed_indices)
         crop_weed_logits = tf.gather(predict, crop_weed_indices)
-        object_logits = tf.gather(logit_objectiness_, crop_weed_indices)
         crop_indices = tf.where(tf.not_equal(crop_weed_labels, 1))        
         crop_labels = tf.gather(crop_weed_labels, crop_indices)
-        crop_object = tf.squeeze(tf.gather(object_logits, crop_indices), -1)
         crop_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, crop_indices), -1), -1)
         crop_labels = tf.squeeze(tf.cast(crop_labels, tf.float32), -1)
 
         weed_indices = tf.where(tf.not_equal(crop_weed_labels, 0))
         weed_labels = tf.gather(crop_weed_labels, weed_indices)
-        weed_object = tf.squeeze(tf.gather(object_logits, weed_indices), -1)
         weed_logits = tf.squeeze(tf.squeeze(tf.gather(crop_weed_logits, weed_indices), -1), -1)
         weed_labels = tf.squeeze(tf.cast(weed_labels, tf.float32), -1)
 
-        seg_loss = false_dice_loss(crop_labels, crop_logits) \
-            + true_dice_loss(weed_labels, weed_logits) \
-            + modified_dice_loss_nonobject(crop_labels, crop_logits) \
-            + modified_dice_loss_object(weed_labels, weed_logits)
+        no_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
+        no_crop_labels = tf.gather(batch_labels, no_crop_indices)
+        no_crop_labels = tf.ones_like(no_crop_labels, dtype=tf.float32)
+        no_crop_logits = tf.squeeze(tf.gather(predict, no_crop_indices), -1)
+        no_crop_loss = true_dice_loss(no_crop_labels, no_crop_logits)
+
+        no_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
+        no_weed_labels = tf.gather(batch_labels, no_weed_indices)
+        no_weed_labels = tf.zeros_like(no_weed_labels, dtype=tf.float32)
+        no_weed_logits = tf.squeeze(tf.gather(predict, no_weed_indices), -1)
+        no_weed_loss = false_dice_loss(no_weed_labels, no_weed_logits)
         
+        if len(crop_labels) < len(weed_labels):
+            seg_loss = false_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
+                + no_weed_loss
+                # + modified_dice_loss_nonobject(crop_weed_labels, tf.squeeze(crop_weed_logits, -1))
+        elif len(crop_labels) > len(weed_labels):
+            seg_loss = true_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
+                + no_crop_loss
+                # + modified_dice_loss_object(crop_weed_labels, tf.squeeze(crop_weed_logits, -1))
+        else:
+            seg_loss = false_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
+                + true_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
+                + no_weed_loss + no_crop_loss
+                # + modified_dice_loss_nonobject(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
+                # + modified_dice_loss_object(crop_weed_labels, tf.squeeze(crop_weed_logits, -1))
+        
+        # how about no weed and no crop?!?!?!?!?
         loss = seg_loss + no_obj_loss + obj_loss
 
     grads = tape.gradient(loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
-
-    with tf.GradientTape() as tape:
-        
-        batch_labels = tf.reshape(labels, [-1,])
-        # indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, ignore_label)),1)
-        # labels_ = tf.cast(tf.gather(batch_labels, indices), tf.float32)
-
-        logits = run_model(model, images, True)
-        raw_logits = tf.reshape(logits, [-1, FLAGS.total_classes-1])
-        predict = raw_logits[:, 0:1]
-        # predict = tf.gather(raw_logits, indices)
-
-        # class_im_plain = tf.reshape(class_im_plain, [-1,])
-        # class_im_plain = tf.cast(tf.gather(class_im_plain, indices), tf.float32)
-
-        label_objectiness = tf.cast(tf.reshape(objectiness, [-1,]), tf.float32)
-        logit_objectiness = raw_logits[:, -1]
-        
-        no_obj_indices = tf.squeeze(tf.where(tf.equal(tf.reshape(objectiness, [-1,]), 0)),1)
-        no_logit_objectiness = tf.gather(logit_objectiness, no_obj_indices)
-        no_obj_labels = tf.cast(tf.gather(label_objectiness, no_obj_indices), tf.float32)
-        no_obj_loss = false_dice_loss(label_objectiness, logit_objectiness)
-
-        obj_indices = tf.squeeze(tf.where(tf.not_equal(tf.reshape(objectiness, [-1,]), 0)),1)
-        yes_logit_objectiness = tf.gather(logit_objectiness, obj_indices)
-        yes_obj_labels = tf.cast(tf.gather(label_objectiness, obj_indices), tf.float32)
-        obj_loss = true_dice_loss(label_objectiness, logit_objectiness)
-        
-        logit_objectiness_ = tf.nn.sigmoid(raw_logits[:, -1])
-        
-        crop_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), 1)
-        crop_weed_labels = tf.gather(batch_labels, crop_weed_indices)
-        crop_weed_logits = tf.gather(predict, crop_weed_indices)
-
-        seg_loss = false_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1)) \
-            + true_dice_loss(crop_weed_labels, tf.squeeze(crop_weed_logits, -1))
-        
-        loss = seg_loss + no_obj_loss + obj_loss
-
-    grads2 = tape.gradient(loss, model.trainable_variables)
-    new_grads = lambda x,y:[(x[i] + y[i]) / 2. for i in range(len(grads2))]    # gradient sum?? 
     
-    optim.apply_gradients(zip(new_grads(grads, grads2), model.trainable_variables))
-
     return loss
 
 
@@ -601,7 +584,7 @@ def main():
             if not os.path.isdir(model_dir):
                 print("Make {} folder to store the weight!".format(epoch))
                 os.makedirs(model_dir)
-            ckpt = tf.train.Checkpoint(model=model, optim=optim)
+            ckpt = tf.train.Checkpoint(model=model, optim=optim, optim2=optim2)
             ckpt_dir = model_dir + "/Crop_weed_model_{}.ckpt".format(epoch)
             ckpt.save(ckpt_dir)
             
