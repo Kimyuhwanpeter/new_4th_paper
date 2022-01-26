@@ -50,7 +50,7 @@ lr_decayed_fn = (
       FLAGS.lr,
       200))
 
-optim = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.5)
+optim = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.9)
 optim2 = tf.keras.optimizers.Adam(lr_decayed_fn, beta_1=0.5)
 color_map = np.array([[255, 0, 0], [0, 0, 255], [0,0,0]], dtype=np.uint8)
 
@@ -306,8 +306,8 @@ def main():
         if isinstance(layer, tf.keras.layers.BatchNormalization):
             layer.momentum = 0.9997
             layer.epsilon = 1e-5
-        #elif isinstance(layer, tf.keras.layers.Conv2D):
-        #    layer.kernel_regularizer = tf.keras.regularizers.l2(0.0005)
+        elif isinstance(layer, tf.keras.layers.Conv2D):
+           layer.kernel_regularizer = tf.keras.regularizers.l2(0.0005)
 
     model.summary()
 
