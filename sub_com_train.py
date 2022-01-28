@@ -54,7 +54,7 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            "train": True})
 
 
-optim = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.9)
+optim = tf.keras.optimizers.Adam(FLAGS.lr)
 color_map = np.array([[255, 0, 0], [0, 0, 255], [0,0,0]], dtype=np.uint8)
 
 def tr_func(image_list, label_list):
@@ -143,7 +143,7 @@ def modified_dice_loss_object(y_true, y_pred):
     numerator = (y_true * (1 - tf.math.sigmoid(y_pred)) * tf.nn.sigmoid_cross_entropy_with_logits(y_true, y_pred))
     denominator = (y_true * tf.math.sigmoid(y_pred) * 0.9 * tf.nn.sigmoid_cross_entropy_with_logits(y_true, y_pred) + 1)
     loss = tf.math.divide(numerator, denominator)
-    loss = tf.reduce_mean(loss)
+    # loss = tf.reduce_mean(loss)
 
     return loss
 
@@ -153,15 +153,63 @@ def modified_dice_loss_nonobject(y_true, y_pred):
     numerator = ((1  - y_true) * tf.math.sigmoid(y_pred) * tf.nn.sigmoid_cross_entropy_with_logits(y_true, y_pred))
     denominator = ((1  - y_true) * (1 - tf.math.sigmoid(y_pred)) * 0.9 * tf.nn.sigmoid_cross_entropy_with_logits(y_true, y_pred) + 1)
     loss = tf.math.divide(numerator, denominator)
-    loss = tf.reduce_mean(loss)
+    # loss = tf.reduce_mean(loss)
 
     return loss
 
-def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
+def categorical_focal_loss(alpha, gamma=2.):
+    """
+    Softmax version of focal loss.
+    When there is a skew between different categories/labels in your data set, you can try to apply this function as a
+    loss.
+           m
+      FL = ∑  -alpha * (1 - p_o,c)^gamma * y_o,c * log(p_o,c)
+          c=1
+      where m = number of classes, c = class and o = observation
+    Parameters:
+      alpha -- the same as weighing factor in balanced cross entropy. Alpha is used to specify the weight of different
+      categories/labels, the size of the array needs to be consistent with the number of classes.
+      gamma -- focusing parameter for modulating factor (1-p)
+    Default value:
+      gamma -- 2.0 as mentioned in the paper
+      alpha -- 0.25 as mentioned in the paper
+    References:
+        Official paper: https://arxiv.org/pdf/1708.02002.pdf
+        https://www.tensorflow.org/api_docs/python/tf/keras/backend/categorical_crossentropy
+    Usage:
+     model.compile(loss=[categorical_focal_loss(alpha=[[.25, .25, .25]], gamma=2)], metrics=["accuracy"], optimizer=adam)
+    """
+
+    alpha = np.array(alpha, dtype=np.float32)
+    alpha = np.reshape(alpha, [1, 3])
+
+    def categorical_focal_loss_fixed(y_true, y_pred):
+        """
+        :param y_true: A tensor of the same shape as `y_pred`
+        :param y_pred: A tensor resulting from a softmax
+        :return: Output tensor.
+        """
+
+        # Clip the prediction value to prevent NaN's and Inf's
+        epsilon = tf.keras.backend.epsilon()
+        y_pred = tf.experimental.numpy.clip(y_pred, epsilon, 1. - epsilon)
+
+        # Calculate Cross Entropy
+        cross_entropy = -y_true * tf.math.log(y_pred)
+
+        # Calculate Focal Loss
+        loss = alpha * tf.math.pow(1 - y_pred, gamma) * cross_entropy
+
+        # Compute mean loss in mini_batch
+        return tf.keras.backend.mean(tf.keras.backend.sum(loss, axis=-1))
+
+    return categorical_focal_loss_fixed
+
+def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf, weed_buf):
 
     with tf.GradientTape() as tape:
 
-        
+        e_ws = []
         batch_labels = tf.reshape(labels, [-1,])
         logits = run_model(model, images, True)
         logits = tf.reshape(logits, [-1, FLAGS.total_classes])
@@ -171,60 +219,69 @@ def cal_loss(model, images, labels, objectiness, class_im_plain, ignore_label):
         background_labels = tf.gather(batch_labels, background_indices)
         background_labels = tf.zeros_like(background_labels, dtype=tf.float32)
         background_logits = tf.gather(logits[:, 2], background_indices)
-        loss2 = false_dice_loss(background_labels, background_logits)
+        loss2 = tf.reduce_mean(false_dice_loss(background_labels, background_logits) \
+            + modified_dice_loss_nonobject(background_labels, background_logits))
 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
         non_background_labels = tf.gather(batch_labels, non_background_indices)
         non_background_labels = tf.ones_like(non_background_labels, dtype=tf.float32)
         non_background_logits = tf.gather(logits[:, 2], non_background_indices)
-        loss2 += true_dice_loss(non_background_labels, non_background_logits)
+        loss2 += tf.reduce_mean(true_dice_loss(non_background_labels, non_background_logits) \
+            + modified_dice_loss_object(non_background_labels, non_background_logits))
 
         # Dice for Crop
         crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1)
         crop_labels = tf.gather(batch_labels, crop_indices)
         crop_labels = tf.ones_like(crop_labels, dtype=tf.float32)
         crop_logits = tf.gather(logits[:, 0], crop_indices)
-        loss4 = true_dice_loss(crop_labels, crop_logits)
+        loss4 = tf.reduce_mean(true_dice_loss(crop_labels, crop_logits) \
+            + modified_dice_loss_object(crop_labels, crop_logits))
 
         non_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
         non_crop_labels = tf.gather(batch_labels, non_crop_indices)
         non_crop_labels = tf.zeros_like(non_crop_labels, dtype=tf.float32)
         non_crop_logits = tf.gather(logits[:, 0], non_crop_indices)
-        loss4 += false_dice_loss(non_crop_labels, non_crop_logits)
+        loss4 += tf.reduce_mean(false_dice_loss(non_crop_labels, non_crop_logits) \
+            + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits))
         
         # Dice for weed
         weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
         weed_labels = tf.gather(batch_labels, weed_indices)
         weed_labels = tf.ones_like(weed_labels, dtype=tf.float32)
         weed_logits = tf.gather(logits[:, 1], weed_indices)
-        loss5 = true_dice_loss(weed_labels, weed_logits)
+        loss5 = tf.reduce_mean(true_dice_loss(weed_labels, weed_logits) \
+            + modified_dice_loss_object(weed_labels, weed_logits))
         
         non_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
         non_weed_labels = tf.gather(batch_labels, non_weed_indices)
         non_weed_labels = tf.zeros_like(non_weed_labels, dtype=tf.float32)
         non_weed_logits = tf.gather(logits[:, 1], non_weed_indices)
-        loss5 += false_dice_loss(non_weed_labels, non_weed_logits)
+        loss5 += tf.reduce_mean(false_dice_loss(non_weed_labels, non_weed_logits) \
+            + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits))
 
         loss = loss4 + loss5 + loss2
-
+        
     grads = tape.gradient(loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
-
+    
+    temp_logits = logits
+    temp_logits = tf.reshape(temp_logits, [-1, FLAGS.total_classes])
+    sigmoid_logits = tf.nn.sigmoid(temp_logits)
     with tf.GradientTape() as tape:
 
-        
         batch_labels = tf.reshape(labels, [-1,])
         logits = run_model(model, images, True)
         logits = tf.reshape(logits, [-1, FLAGS.total_classes])
-
+        
         # Softmax cross entropy --> crop, weed, background
-        sigmoid_logits = tf.nn.sigmoid(logits)
-        loss1 = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)(batch_labels, logits * sigmoid_logits)
-
+        # loss1 = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)(batch_labels, logits * sigmoid_logits)
+        batch_labels = tf.cast(batch_labels, tf.int32)
+        batch_labels = tf.one_hot(batch_labels, FLAGS.total_classes)
+        loss1 = categorical_focal_loss(alpha=[[class_imbal_labels_buf[0]], [class_imbal_labels_buf[1]], [class_imbal_labels_buf[2]]])(batch_labels, logits * sigmoid_logits)
+        
         loss = loss1
 
     grads = tape.gradient(loss, model.trainable_variables)
-
     optim.apply_gradients(zip(grads, model.trainable_variables))
 
     return loss
@@ -238,7 +295,7 @@ def main():
     # 가지고오자
     model = DeepLabV3Plus(FLAGS.img_size, FLAGS.img_size, 34)
     out = model.get_layer("activation_decoder_2_upsample").output
-    out = tf.keras.layers.Conv2D(FLAGS.total_classes, (1, 1), name='output_layer')(out)
+    out = tf.keras.layers.Conv2D(FLAGS.total_classes, (1, 1))(out)
     model = tf.keras.Model(inputs=model.input, outputs=out)
 
     for layer in model.layers:
@@ -317,17 +374,23 @@ def main():
                     class_imbal_label = np.reshape(class_imbal_label, [FLAGS.img_size*FLAGS.img_size, ])
                     count_c_i_lab = np.bincount(class_imbal_label, minlength=FLAGS.total_classes)
                     class_imbal_labels_buf += count_c_i_lab
-                class_imbal_labels_buf /= 2
-                class_imbal_labels_buf = class_imbal_labels_buf[0:FLAGS.total_classes-1]
+                class_imbal_labels_buf /= FLAGS.batch_size
+                class_imbal_labels_buf = class_imbal_labels_buf[0:FLAGS.total_classes]
+                object_buf = np.array([class_imbal_labels_buf[2], class_imbal_labels_buf[0] + class_imbal_labels_buf[1]], dtype=np.float32)
+                crop_buf = np.array([class_imbal_labels_buf[2]+class_imbal_labels_buf[1], class_imbal_labels_buf[0]], dtype=np.float32)
+                weed_buf = np.array([class_imbal_labels_buf[2]+class_imbal_labels_buf[0], class_imbal_labels_buf[1]], dtype=np.float32)
+                
                 class_imbal_labels_buf = (np.max(class_imbal_labels_buf / np.sum(class_imbal_labels_buf)) + 1 - (class_imbal_labels_buf / np.sum(class_imbal_labels_buf)))
-                class_im_plain = np.where(batch_labels == 0, class_imbal_labels_buf[0], batch_labels)
-                class_im_plain = np.where(batch_labels == 1, class_imbal_labels_buf[1], batch_labels)
-                #a = np.reshape(class_im_plain, [FLAGS.batch_size*FLAGS.img_size*FLAGS.img_size, ])
-                #a = np.array(a, dtype=np.int32)
-                #a = np.bincount(a, minlength=3)
-                objectiness = np.where(batch_labels == 2, 0, 1)  # 피사체가 있는곳은 1 없는곳은 0으로 만들어준것
+                object_buf = (np.max(object_buf / np.sum(object_buf)) + 1 - (object_buf / np.sum(object_buf)))
+                crop_buf = (np.max(crop_buf / np.sum(crop_buf)) + 1 - (crop_buf / np.sum(crop_buf)))
+                weed_buf = (np.max(weed_buf / np.sum(weed_buf)) + 1 - (weed_buf / np.sum(weed_buf)))
+                class_imbal_labels_buf = tf.nn.softmax(class_imbal_labels_buf).numpy()
+                object_buf = tf.nn.softmax(object_buf).numpy()
+                crop_buf = tf.nn.softmax(crop_buf).numpy()
+                weed_buf = tf.nn.softmax(weed_buf).numpy()
 
-                loss = cal_loss(model, batch_images, batch_labels, objectiness, class_im_plain, 2)
+                loss = cal_loss(model, batch_images, batch_labels, class_imbal_labels_buf, object_buf,
+                                crop_buf, weed_buf)
                 if count % 10 == 0:
                     print("Epoch: {} [{}/{}] loss = {}".format(epoch, step+1, tr_idx, loss))
 
@@ -344,9 +407,9 @@ def main():
                         att_weed = att_weed_output[i].numpy()
                         att_back = att_back_output[i].numpy()
                         image = output[i].numpy()
-                        image[:, :, 0] = image[:, :, 0] * att_crop
-                        image[:, :, 1] = image[:, :, 1] * att_weed
-                        image[:, :, 2] = image[:, :, 2] * att_back
+                        # image[:, :, 0] = image[:, :, 0] * att_crop
+                        # image[:, :, 1] = image[:, :, 1] * att_weed
+                        # image[:, :, 2] = image[:, :, 2] * att_back
                         image = tf.nn.softmax(image, -1)
                         image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
                         pred_mask_color = color_map[image]
@@ -383,9 +446,9 @@ def main():
                     att_weed = tf.nn.sigmoid(output[0, :, :, 1])
                     att_back = tf.nn.sigmoid(output[0, :, :, 2])
                     image = output[0].numpy()
-                    image[:, :, 0] = image[:, :, 0] * att_crop
-                    image[:, :, 1] = image[:, :, 1] * att_weed
-                    image[:, :, 2] = image[:, :, 2] * att_back
+                    # image[:, :, 0] = image[:, :, 0] * att_crop
+                    # image[:, :, 1] = image[:, :, 1] * att_weed
+                    # image[:, :, 2] = image[:, :, 2] * att_back
                     image = tf.nn.softmax(image, -1)
                     image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
 
@@ -457,9 +520,9 @@ def main():
                     att_weed = tf.nn.sigmoid(output[0, :, :, 1])
                     att_back = tf.nn.sigmoid(output[0, :, :, 2])
                     image = output[0].numpy()
-                    image[:, :, 0] = image[:, :, 0] * att_crop
-                    image[:, :, 1] = image[:, :, 1] * att_weed
-                    image[:, :, 2] = image[:, :, 2] * att_back
+                    # image[:, :, 0] = image[:, :, 0] * att_crop
+                    # image[:, :, 1] = image[:, :, 1] * att_weed
+                    # image[:, :, 2] = image[:, :, 2] * att_back
                     image = tf.nn.softmax(image, -1)
                     image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
 
@@ -525,9 +588,9 @@ def main():
                     att_weed = tf.nn.sigmoid(output[0, :, :, 1])
                     att_back = tf.nn.sigmoid(output[0, :, :, 2])
                     image = output[0].numpy()
-                    image[:, :, 0] = image[:, :, 0] * att_crop
-                    image[:, :, 1] = image[:, :, 1] * att_weed
-                    image[:, :, 2] = image[:, :, 2] * att_back
+                    # image[:, :, 0] = image[:, :, 0] * att_crop
+                    # image[:, :, 1] = image[:, :, 1] * att_weed
+                    # image[:, :, 2] = image[:, :, 2] * att_back
                     image = tf.nn.softmax(image, -1)
                     image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
 
