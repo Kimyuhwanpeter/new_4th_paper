@@ -54,7 +54,7 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            "train": True})
 
 
-optim = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.5)
+optim = tf.keras.optimizers.Adam(FLAGS.lr)
 color_map = np.array([[255, 0, 0], [0, 0, 255], [0,0,0]], dtype=np.uint8)
 
 def tr_func(image_list, label_list):
@@ -161,7 +161,7 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
 
     with tf.GradientTape() as tape:
 
-        
+        e_ws = []
         batch_labels = tf.reshape(labels, [-1,])
         logits = run_model(model, images, True)
         logits = tf.reshape(logits, [-1, FLAGS.total_classes])
@@ -172,14 +172,14 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         background_labels = tf.zeros_like(background_labels, dtype=tf.float32)
         background_logits = tf.gather(logits[:, 2], background_indices)
         loss2 = (false_dice_loss(background_labels, background_logits) \
-            + modified_dice_loss_nonobject(background_labels, background_logits)) * object_buf[0]
+            + modified_dice_loss_nonobject(background_labels, background_logits))
 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
         non_background_labels = tf.gather(batch_labels, non_background_indices)
         non_background_labels = tf.ones_like(non_background_labels, dtype=tf.float32)
         non_background_logits = tf.gather(logits[:, 2], non_background_indices)
         loss2 += (true_dice_loss(non_background_labels, non_background_logits) \
-            + modified_dice_loss_object(non_background_labels, non_background_logits)) * object_buf[1]
+            + modified_dice_loss_object(non_background_labels, non_background_logits))
 
         # Dice for Crop
         crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1)
@@ -187,14 +187,14 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         crop_labels = tf.ones_like(crop_labels, dtype=tf.float32)
         crop_logits = tf.gather(logits[:, 0], crop_indices)
         loss4 = (true_dice_loss(crop_labels, crop_logits) \
-            + modified_dice_loss_object(crop_labels, crop_logits)) * crop_buf[1]
+            + modified_dice_loss_object(crop_labels, crop_logits))
 
         non_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
         non_crop_labels = tf.gather(batch_labels, non_crop_indices)
         non_crop_labels = tf.zeros_like(non_crop_labels, dtype=tf.float32)
         non_crop_logits = tf.gather(logits[:, 0], non_crop_indices)
         loss4 += (false_dice_loss(non_crop_labels, non_crop_logits) \
-            + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits)) * crop_buf[0]
+            + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits))
         
         # Dice for weed
         weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
@@ -202,39 +202,35 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         weed_labels = tf.ones_like(weed_labels, dtype=tf.float32)
         weed_logits = tf.gather(logits[:, 1], weed_indices)
         loss5 = (true_dice_loss(weed_labels, weed_logits) \
-            + modified_dice_loss_object(weed_labels, weed_logits)) * weed_buf[1]
+            + modified_dice_loss_object(weed_labels, weed_logits))
         
         non_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
         non_weed_labels = tf.gather(batch_labels, non_weed_indices)
         non_weed_labels = tf.zeros_like(non_weed_labels, dtype=tf.float32)
         non_weed_logits = tf.gather(logits[:, 1], non_weed_indices)
         loss5 += (false_dice_loss(non_weed_labels, non_weed_logits) \
-            + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits)) * weed_buf[0]
+            + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits))
 
         loss = loss4 + loss5 + loss2
-        sigmoid_logits = tf.nn.sigmoid(logits)
+        
     grads = tape.gradient(loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
-
+    
+    temp_logits = run_model(model, images, False)
+    temp_logits = tf.reshape(temp_logits, [-1, FLAGS.total_classes])
+    sigmoid_logits = tf.nn.sigmoid(temp_logits)
     with tf.GradientTape() as tape:
 
-        
         batch_labels = tf.reshape(labels, [-1,])
         logits = run_model(model, images, True)
         logits = tf.reshape(logits, [-1, FLAGS.total_classes])
-
-        # temp_logits = logits.numpy()
-        # temp_logits[:, 0] = temp_logits[:, 0] * class_imbal_labels_buf[0]
-        # temp_logits[:, 1] = temp_logits[:, 1] * class_imbal_labels_buf[1]
-        # temp_logits[:, 2] = temp_logits[:, 2] * class_imbal_labels_buf[2]
-
+        
         # Softmax cross entropy --> crop, weed, background
         loss1 = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)(batch_labels, logits * sigmoid_logits)
         
         loss = loss1
 
     grads = tape.gradient(loss, model.trainable_variables)
-
     optim.apply_gradients(zip(grads, model.trainable_variables))
 
     return loss
@@ -360,9 +356,9 @@ def main():
                         att_weed = att_weed_output[i].numpy()
                         att_back = att_back_output[i].numpy()
                         image = output[i].numpy()
-                        image[:, :, 0] = image[:, :, 0] * att_crop
-                        image[:, :, 1] = image[:, :, 1] * att_weed
-                        image[:, :, 2] = image[:, :, 2] * att_back
+                        # image[:, :, 0] = image[:, :, 0] * att_crop
+                        # image[:, :, 1] = image[:, :, 1] * att_weed
+                        # image[:, :, 2] = image[:, :, 2] * att_back
                         image = tf.nn.softmax(image, -1)
                         image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
                         pred_mask_color = color_map[image]
@@ -399,9 +395,9 @@ def main():
                     att_weed = tf.nn.sigmoid(output[0, :, :, 1])
                     att_back = tf.nn.sigmoid(output[0, :, :, 2])
                     image = output[0].numpy()
-                    image[:, :, 0] = image[:, :, 0] * att_crop
-                    image[:, :, 1] = image[:, :, 1] * att_weed
-                    image[:, :, 2] = image[:, :, 2] * att_back
+                    # image[:, :, 0] = image[:, :, 0] * att_crop
+                    # image[:, :, 1] = image[:, :, 1] * att_weed
+                    # image[:, :, 2] = image[:, :, 2] * att_back
                     image = tf.nn.softmax(image, -1)
                     image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
 
@@ -473,9 +469,9 @@ def main():
                     att_weed = tf.nn.sigmoid(output[0, :, :, 1])
                     att_back = tf.nn.sigmoid(output[0, :, :, 2])
                     image = output[0].numpy()
-                    image[:, :, 0] = image[:, :, 0] * att_crop
-                    image[:, :, 1] = image[:, :, 1] * att_weed
-                    image[:, :, 2] = image[:, :, 2] * att_back
+                    # image[:, :, 0] = image[:, :, 0] * att_crop
+                    # image[:, :, 1] = image[:, :, 1] * att_weed
+                    # image[:, :, 2] = image[:, :, 2] * att_back
                     image = tf.nn.softmax(image, -1)
                     image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
 
@@ -541,9 +537,9 @@ def main():
                     att_weed = tf.nn.sigmoid(output[0, :, :, 1])
                     att_back = tf.nn.sigmoid(output[0, :, :, 2])
                     image = output[0].numpy()
-                    image[:, :, 0] = image[:, :, 0] * att_crop
-                    image[:, :, 1] = image[:, :, 1] * att_weed
-                    image[:, :, 2] = image[:, :, 2] * att_back
+                    # image[:, :, 0] = image[:, :, 0] * att_crop
+                    # image[:, :, 1] = image[:, :, 1] * att_weed
+                    # image[:, :, 2] = image[:, :, 2] * att_back
                     image = tf.nn.softmax(image, -1)
                     image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
 
