@@ -54,7 +54,8 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            "train": True})
 
 
-optim = tf.keras.optimizers.Adam(FLAGS.lr)
+optim = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.5)
+optim2 = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.9)
 color_map = np.array([[255, 0, 0], [0, 0, 255], [0,0,0]], dtype=np.uint8)
 
 def tr_func(image_list, label_list):
@@ -143,7 +144,7 @@ def modified_dice_loss_object(y_true, y_pred):
     numerator = (y_true * (1 - tf.math.sigmoid(y_pred)) * tf.nn.sigmoid_cross_entropy_with_logits(y_true, y_pred))
     denominator = (y_true * tf.math.sigmoid(y_pred) * 0.9 * tf.nn.sigmoid_cross_entropy_with_logits(y_true, y_pred) + 1)
     loss = tf.math.divide(numerator, denominator)
-    loss = tf.reduce_mean(loss)
+    # loss = tf.reduce_mean(loss)
 
     return loss
 
@@ -153,9 +154,57 @@ def modified_dice_loss_nonobject(y_true, y_pred):
     numerator = ((1  - y_true) * tf.math.sigmoid(y_pred) * tf.nn.sigmoid_cross_entropy_with_logits(y_true, y_pred))
     denominator = ((1  - y_true) * (1 - tf.math.sigmoid(y_pred)) * 0.9 * tf.nn.sigmoid_cross_entropy_with_logits(y_true, y_pred) + 1)
     loss = tf.math.divide(numerator, denominator)
-    loss = tf.reduce_mean(loss)
+    # loss = tf.reduce_mean(loss)
 
     return loss
+
+def categorical_focal_loss(alpha, gamma=2.):
+    """
+    Softmax version of focal loss.
+    When there is a skew between different categories/labels in your data set, you can try to apply this function as a
+    loss.
+           m
+      FL = ∑  -alpha * (1 - p_o,c)^gamma * y_o,c * log(p_o,c)
+          c=1
+      where m = number of classes, c = class and o = observation
+    Parameters:
+      alpha -- the same as weighing factor in balanced cross entropy. Alpha is used to specify the weight of different
+      categories/labels, the size of the array needs to be consistent with the number of classes.
+      gamma -- focusing parameter for modulating factor (1-p)
+    Default value:
+      gamma -- 2.0 as mentioned in the paper
+      alpha -- 0.25 as mentioned in the paper
+    References:
+        Official paper: https://arxiv.org/pdf/1708.02002.pdf
+        https://www.tensorflow.org/api_docs/python/tf/keras/backend/categorical_crossentropy
+    Usage:
+     model.compile(loss=[categorical_focal_loss(alpha=[[.25, .25, .25]], gamma=2)], metrics=["accuracy"], optimizer=adam)
+    """
+
+    alpha = np.array(alpha, dtype=np.float32)
+    alpha = np.reshape(alpha, [1, 3])
+
+    def categorical_focal_loss_fixed(y_true, y_pred):
+        """
+        :param y_true: A tensor of the same shape as `y_pred`
+        :param y_pred: A tensor resulting from a softmax
+        :return: Output tensor.
+        """
+
+        # Clip the prediction value to prevent NaN's and Inf's
+        epsilon = tf.keras.backend.epsilon()
+        y_pred = tf.experimental.numpy.clip(y_pred, epsilon, 1. - epsilon)
+
+        # Calculate Cross Entropy
+        cross_entropy = -y_true * tf.math.log(y_pred)
+
+        # Calculate Focal Loss
+        loss = alpha * tf.math.pow(1 - y_pred, gamma) * cross_entropy
+
+        # Compute mean loss in mini_batch
+        return tf.keras.backend.mean(tf.keras.backend.sum(loss, axis=-1))
+
+    return categorical_focal_loss_fixed
 
 def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf, weed_buf):
 
@@ -171,14 +220,14 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         background_labels = tf.gather(batch_labels, background_indices)
         background_labels = tf.zeros_like(background_labels, dtype=tf.float32)
         background_logits = tf.gather(logits[:, 2], background_indices)
-        loss2 = (false_dice_loss(background_labels, background_logits) \
+        loss2 = tf.reduce_mean(false_dice_loss(background_labels, background_logits) \
             + modified_dice_loss_nonobject(background_labels, background_logits))
 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
         non_background_labels = tf.gather(batch_labels, non_background_indices)
         non_background_labels = tf.ones_like(non_background_labels, dtype=tf.float32)
         non_background_logits = tf.gather(logits[:, 2], non_background_indices)
-        loss2 += (true_dice_loss(non_background_labels, non_background_logits) \
+        loss2 += tf.reduce_mean(true_dice_loss(non_background_labels, non_background_logits) \
             + modified_dice_loss_object(non_background_labels, non_background_logits))
 
         # Dice for Crop
@@ -186,14 +235,14 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         crop_labels = tf.gather(batch_labels, crop_indices)
         crop_labels = tf.ones_like(crop_labels, dtype=tf.float32)
         crop_logits = tf.gather(logits[:, 0], crop_indices)
-        loss4 = (true_dice_loss(crop_labels, crop_logits) \
+        loss4 = tf.reduce_mean(true_dice_loss(crop_labels, crop_logits) \
             + modified_dice_loss_object(crop_labels, crop_logits))
 
         non_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
         non_crop_labels = tf.gather(batch_labels, non_crop_indices)
         non_crop_labels = tf.zeros_like(non_crop_labels, dtype=tf.float32)
         non_crop_logits = tf.gather(logits[:, 0], non_crop_indices)
-        loss4 += (false_dice_loss(non_crop_labels, non_crop_logits) \
+        loss4 += tf.reduce_mean(false_dice_loss(non_crop_labels, non_crop_logits) \
             + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits))
         
         # Dice for weed
@@ -201,37 +250,41 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         weed_labels = tf.gather(batch_labels, weed_indices)
         weed_labels = tf.ones_like(weed_labels, dtype=tf.float32)
         weed_logits = tf.gather(logits[:, 1], weed_indices)
-        loss5 = (true_dice_loss(weed_labels, weed_logits) \
+        loss5 = tf.reduce_mean(true_dice_loss(weed_labels, weed_logits) \
             + modified_dice_loss_object(weed_labels, weed_logits))
         
         non_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
         non_weed_labels = tf.gather(batch_labels, non_weed_indices)
         non_weed_labels = tf.zeros_like(non_weed_labels, dtype=tf.float32)
         non_weed_logits = tf.gather(logits[:, 1], non_weed_indices)
-        loss5 += (false_dice_loss(non_weed_labels, non_weed_logits) \
+        loss5 += tf.reduce_mean(false_dice_loss(non_weed_labels, non_weed_logits) \
             + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits))
 
-        loss = loss4 + loss5 + loss2
+        # Softmax cross entropy --> crop, weed, background
+        # loss1 = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)(batch_labels, logits * sigmoid_logits)
+        batch_labels = tf.cast(batch_labels, tf.int32)
+        batch_labels = tf.one_hot(batch_labels, FLAGS.total_classes)
+        if class_imbal_labels_buf[1] > class_imbal_labels_buf[0]:
+            class_imbal_labels_buf[1] = class_imbal_labels_buf[1] + class_imbal_labels_buf[2]
+            class_imbal_labels_buf[0] = 1. - class_imbal_labels_buf[0]
+        elif class_imbal_labels_buf[1] < class_imbal_labels_buf[0]:
+            class_imbal_labels_buf[0] = class_imbal_labels_buf[0] + class_imbal_labels_buf[2]
+            class_imbal_labels_buf[1] = 1. - class_imbal_labels_buf[1]
+        else:
+            class_imbal_labels_buf[1] = class_imbal_labels_buf[1]
+            class_imbal_labels_buf[0] = class_imbal_labels_buf[0]
+            
+        temp_logits = logits
+        sigmoid_logits = tf.nn.sigmoid(temp_logits) # change to softmax !?    
+        
+        loss1 = categorical_focal_loss(alpha=[[class_imbal_labels_buf[0]], [class_imbal_labels_buf[1]], [class_imbal_labels_buf[2]]])(batch_labels, logits * sigmoid_logits)
+        
+
+        loss = loss4 + loss5 + loss2 + loss1
         
     grads = tape.gradient(loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
     
-    temp_logits = run_model(model, images, False)
-    temp_logits = tf.reshape(temp_logits, [-1, FLAGS.total_classes])
-    sigmoid_logits = tf.nn.sigmoid(temp_logits)
-    with tf.GradientTape() as tape:
-
-        batch_labels = tf.reshape(labels, [-1,])
-        logits = run_model(model, images, True)
-        logits = tf.reshape(logits, [-1, FLAGS.total_classes])
-        
-        # Softmax cross entropy --> crop, weed, background
-        loss1 = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)(batch_labels, logits * sigmoid_logits)
-        
-        loss = loss1
-
-    grads = tape.gradient(loss, model.trainable_variables)
-    optim.apply_gradients(zip(grads, model.trainable_variables))
 
     return loss
 
@@ -344,7 +397,7 @@ def main():
                     print("Epoch: {} [{}/{}] loss = {}".format(epoch, step+1, tr_idx, loss))
 
                 if count % 100 == 0:
-
+    
                     output = run_model(model, batch_images, False)
                     att_crop_output = tf.nn.sigmoid(output[:, :, :, 0])
                     att_weed_output = tf.nn.sigmoid(output[:, :, :, 1])
