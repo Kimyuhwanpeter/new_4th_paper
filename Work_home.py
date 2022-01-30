@@ -47,6 +47,7 @@ FLAGS = easydict.EasyDict({"img_size": 512,
 
 
 optim = tf.keras.optimizers.Adam(FLAGS.lr)
+optim2 = tf.keras.optimizers.Adam(FLAGS.lr)
 color_map = np.array([[255, 0, 0], [0, 0, 255], [0,0,0]], dtype=np.uint8)
 
 def tr_func(image_list, label_list):
@@ -197,7 +198,36 @@ def categorical_focal_loss(alpha, gamma=2.):
 
     return categorical_focal_loss_fixed
 
-def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf, weed_buf):
+def binary_focal_loss(gamma=2., alpha=.25):
+    """
+    Binary form of focal loss.
+      FL(p_t) = -alpha * (1 - p_t)**gamma * log(p_t)
+      where p = sigmoid(x), p_t = p or 1 - p depending on if the label is 1 or 0, respectively.
+    References:
+        https://arxiv.org/pdf/1708.02002.pdf
+    Usage:
+     model.compile(loss=[binary_focal_loss(alpha=.25, gamma=2)], metrics=["accuracy"], optimizer=adam)
+    """
+    def binary_focal_loss_fixed(y_true, y_pred):
+        """
+        :param y_true: A tensor of the same shape as `y_pred`
+        :param y_pred:  A tensor resulting from a sigmoid
+        :return: Output tensor.
+        """
+        pt_1 = tf.where(tf.equal(y_true, 1), y_pred, tf.ones_like(y_pred))
+        pt_0 = tf.where(tf.equal(y_true, 0), y_pred, tf.zeros_like(y_pred))
+
+        epsilon = K.epsilon()
+        # clip to prevent NaN's and Inf's
+        pt_1 = K.clip(pt_1, epsilon, 1. - epsilon)
+        pt_0 = K.clip(pt_0, epsilon, 1. - epsilon)
+
+        return -K.sum(alpha * K.pow(1. - pt_1, gamma) * K.log(pt_1)) \
+               -K.sum((1 - alpha) * K.pow(pt_0, gamma) * K.log(1. - pt_0))
+
+    return binary_focal_loss_fixed
+
+def cal_loss(model, model2, images, labels, class_imbal_labels_buf, object_buf, crop_buf, weed_buf):
 
     with tf.GradientTape() as tape:
 
@@ -206,35 +236,34 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         logits = run_model(model, images, True)
         logits = tf.reshape(logits, [-1, FLAGS.total_classes])
 
-        
-        # # Dice for background
-        # background_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 2)), -1)
-        # background_labels = tf.gather(batch_labels, background_indices)
-        # background_labels = tf.zeros_like(background_labels, dtype=tf.float32)
-        # background_logits = tf.gather(logits[:, 2], background_indices)
-        # loss2 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(background_labels, background_logits) \
-        #     + modified_dice_loss_nonobject(background_labels, background_logits) + false_dice_loss(background_labels, background_logits)) * class_imbal_labels_buf[2]
+        # Dice for background
+        background_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 2)), -1)
+        background_labels = tf.gather(batch_labels, background_indices)
+        background_labels = tf.zeros_like(background_labels, dtype=tf.float32)
+        background_logits = tf.gather(logits[:, 2], background_indices)
+        loss1 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(background_labels, background_logits) \
+            + modified_dice_loss_nonobject(background_labels, background_logits) + false_dice_loss(background_labels, background_logits)) * class_imbal_labels_buf[2]
 
-        # non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
-        # non_background_labels = tf.gather(batch_labels, non_background_indices)
-        # non_background_labels = tf.ones_like(non_background_labels, dtype=tf.float32)
-        # non_background_logits = tf.gather(logits[:, 2], non_background_indices)
-        # loss2 += tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(non_background_labels, non_background_logits) \
-        #     + modified_dice_loss_object(non_background_labels, non_background_logits) + true_dice_loss(non_background_labels, non_background_logits)) * (1 - class_imbal_labels_buf[2])
+        non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
+        non_background_labels = tf.gather(batch_labels, non_background_indices)
+        non_background_labels = tf.ones_like(non_background_labels, dtype=tf.float32)
+        non_background_logits = tf.gather(logits[:, 2], non_background_indices)
+        loss2 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(non_background_labels, non_background_logits) \
+            + modified_dice_loss_object(non_background_labels, non_background_logits) + true_dice_loss(non_background_labels, non_background_logits)) * (1 - class_imbal_labels_buf[2])
 
         # Dice for Crop
         crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1)
         crop_labels = tf.gather(batch_labels, crop_indices)
         crop_labels = tf.ones_like(crop_labels, dtype=tf.float32)
         crop_logits = tf.gather(logits[:, 0], crop_indices)
-        loss4 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(crop_labels, crop_logits) \
+        loss3 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(crop_labels, crop_logits) \
             + modified_dice_loss_object(crop_labels, crop_logits) + true_dice_loss(crop_labels, crop_logits)) * class_imbal_labels_buf[0]
 
         non_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
         non_crop_labels = tf.gather(batch_labels, non_crop_indices)
         non_crop_labels = tf.zeros_like(non_crop_labels, dtype=tf.float32)
         non_crop_logits = tf.gather(logits[:, 0], non_crop_indices)
-        loss4 += tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(non_crop_labels, non_crop_logits) \
+        loss4 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(non_crop_labels, non_crop_logits) \
             + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits) + false_dice_loss(non_crop_labels, non_crop_logits)) * (1 - class_imbal_labels_buf[0])
         
         # Dice for weed
@@ -249,33 +278,17 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         non_weed_labels = tf.gather(batch_labels, non_weed_indices)
         non_weed_labels = tf.zeros_like(non_weed_labels, dtype=tf.float32)
         non_weed_logits = tf.gather(logits[:, 1], non_weed_indices)
-        loss5 += tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(non_weed_labels, non_weed_logits) \
+        loss6 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(non_weed_labels, non_weed_logits) \
             + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits) + false_dice_loss(non_weed_labels, non_weed_logits)) * (1 - class_imbal_labels_buf[1])
 
-        # Softmax cross entropy --> crop, weed, background
-        # loss1 = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)(batch_labels, logits * sigmoid_logits)
         batch_labels = tf.cast(batch_labels, tf.int32)
         batch_labels = tf.one_hot(batch_labels, FLAGS.total_classes)
-        # if class_imbal_labels_buf[1] > class_imbal_labels_buf[0]:
-        #     class_imbal_labels_buf[1] = class_imbal_labels_buf[1] + class_imbal_labels_buf[2]
-        #     class_imbal_labels_buf[0] = 1. - class_imbal_labels_buf[0]
-        # elif class_imbal_labels_buf[1] < class_imbal_labels_buf[0]:
-        #     class_imbal_labels_buf[0] = class_imbal_labels_buf[0] + class_imbal_labels_buf[2]
-        #     class_imbal_labels_buf[1] = 1. - class_imbal_labels_buf[1]
-        # else:
-        #     class_imbal_labels_buf[1] = class_imbal_labels_buf[1]
-        #     class_imbal_labels_buf[0] = class_imbal_labels_buf[0]
-            
-        temp_logits = logits
-        sigmoid_logits = tf.nn.sigmoid(temp_logits) # change to softmax !?    
-        loss1 = categorical_focal_loss(alpha=[[class_imbal_labels_buf[0]], [class_imbal_labels_buf[1]], [class_imbal_labels_buf[2]]])(batch_labels, logits)
-        
-        
-        loss = loss4 + loss5 + loss1
-        
+        loss7 = categorical_focal_loss(alpha=[[class_imbal_labels_buf[0]], [class_imbal_labels_buf[1]], [class_imbal_labels_buf[2]]])(batch_labels, tf.nn.softmax(logits))
+
+        loss = loss1 + loss2 + loss3 + loss4 + loss5 + loss6 + loss7
+
     grads = tape.gradient(loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
-    
 
     return loss
 
@@ -290,6 +303,7 @@ def main():
     out = model.get_layer("activation_decoder_2_upsample").output
     out = tf.keras.layers.Conv2D(FLAGS.total_classes, (1, 1))(out)
     model = tf.keras.Model(inputs=model.input, outputs=out)
+    model2 = tf.keras.Model(inputs=model.input, outputs=out)
 
     for layer in model.layers:
         if isinstance(layer, tf.keras.layers.BatchNormalization):
@@ -381,7 +395,7 @@ def main():
                 crop_buf = tf.nn.softmax(crop_buf).numpy()
                 weed_buf = tf.nn.softmax(weed_buf).numpy()
 
-                loss = cal_loss(model, batch_images, batch_labels, class_imbal_labels_buf, object_buf,
+                loss = cal_loss(model, model2, batch_images, batch_labels, class_imbal_labels_buf, object_buf,
                                 crop_buf, weed_buf)
                 if count % 10 == 0:
                     print("Epoch: {} [{}/{}] loss = {}".format(epoch, step+1, tr_idx, loss))
