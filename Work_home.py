@@ -46,8 +46,8 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            "train": True})
 
 
-optim = tf.keras.optimizers.Adam(FLAGS.lr)
-optim2 = tf.keras.optimizers.Adam(FLAGS.lr)
+optim = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.5)
+optim2 = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.5)
 color_map = np.array([[255, 0, 0], [0, 0, 255], [0,0,0]], dtype=np.uint8)
 
 def tr_func(image_list, label_list):
@@ -174,7 +174,7 @@ def categorical_focal_loss(alpha, gamma=2.):
     """
 
     alpha = np.array(alpha, dtype=np.float32)
-    alpha = np.reshape(alpha, [1, 3])
+    alpha = np.reshape(alpha, [1, 2])
 
     def categorical_focal_loss_fixed(y_true, y_pred):
         """
@@ -222,12 +222,14 @@ def binary_focal_loss(gamma=2., alpha=.25):
         pt_1 = K.clip(pt_1, epsilon, 1. - epsilon)
         pt_0 = K.clip(pt_0, epsilon, 1. - epsilon)
 
-        return -K.sum(alpha * K.pow(1. - pt_1, gamma) * K.log(pt_1)) \
-               -K.sum((1 - alpha) * K.pow(pt_0, gamma) * K.log(1. - pt_0))
+        return -tf.keras.backend.mean((alpha * tf.math.pow(1. - pt_1, gamma) * tf.math.log(pt_1)) \
+               + ((1 - alpha) * tf.math.pow(pt_0, gamma) * tf.math.log(1. - pt_0)))
+        # return -tf.keras.backend.sum(alpha * tf.math.pow(1. - pt_1, gamma) * tf.math.log(pt_1)) \
+        #        -tf.keras.backend.sum((1 - alpha) * tf.math.pow(pt_0, gamma) * tf.math.log(1. - pt_0))
 
     return binary_focal_loss_fixed
 
-def cal_loss(model, model2, images, labels, class_imbal_labels_buf, object_buf, crop_buf, weed_buf):
+def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf, weed_buf):
 
     with tf.GradientTape() as tape:
 
@@ -241,56 +243,64 @@ def cal_loss(model, model2, images, labels, class_imbal_labels_buf, object_buf, 
         background_labels = tf.gather(batch_labels, background_indices)
         background_labels = tf.zeros_like(background_labels, dtype=tf.float32)
         background_logits = tf.gather(logits[:, 2], background_indices)
-        loss1 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(background_labels, background_logits) \
-            + modified_dice_loss_nonobject(background_labels, background_logits) + false_dice_loss(background_labels, background_logits)) * class_imbal_labels_buf[2]
+        loss2 = tf.reduce_mean(false_dice_loss(background_labels, background_logits))
 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
         non_background_labels = tf.gather(batch_labels, non_background_indices)
         non_background_labels = tf.ones_like(non_background_labels, dtype=tf.float32)
         non_background_logits = tf.gather(logits[:, 2], non_background_indices)
-        loss2 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(non_background_labels, non_background_logits) \
-            + modified_dice_loss_object(non_background_labels, non_background_logits) + true_dice_loss(non_background_labels, non_background_logits)) * (1 - class_imbal_labels_buf[2])
+        loss2 += tf.reduce_mean(true_dice_loss(non_background_labels, non_background_logits))
+
+
+        # 여기에다 focal binary for object 를 추가해주자 (아래와 동일하게)
+        objectiness = np.where(batch_labels == 2, 0, 1)  # 피사체가 있는곳은 1 없는곳은 0으로 만들어준것
+        loss2 += binary_focal_loss(alpha=object_buf[1])(objectiness, tf.nn.sigmoid(logits[:, 2]))
+
 
         # Dice for Crop
         crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1)
         crop_labels = tf.gather(batch_labels, crop_indices)
         crop_labels = tf.ones_like(crop_labels, dtype=tf.float32)
         crop_logits = tf.gather(logits[:, 0], crop_indices)
-        loss3 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(crop_labels, crop_logits) \
-            + modified_dice_loss_object(crop_labels, crop_logits) + true_dice_loss(crop_labels, crop_logits)) * class_imbal_labels_buf[0]
+        loss4 = tf.reduce_mean(true_dice_loss(crop_labels, crop_logits) \
+            + modified_dice_loss_object(crop_labels, crop_logits))
 
         non_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
         non_crop_labels = tf.gather(batch_labels, non_crop_indices)
         non_crop_labels = tf.zeros_like(non_crop_labels, dtype=tf.float32)
         non_crop_logits = tf.gather(logits[:, 0], non_crop_indices)
-        loss4 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(non_crop_labels, non_crop_logits) \
-            + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits) + false_dice_loss(non_crop_labels, non_crop_logits)) * (1 - class_imbal_labels_buf[0])
+        loss4 += tf.reduce_mean(false_dice_loss(non_crop_labels, non_crop_logits))
         
         # Dice for weed
         weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
         weed_labels = tf.gather(batch_labels, weed_indices)
         weed_labels = tf.ones_like(weed_labels, dtype=tf.float32)
         weed_logits = tf.gather(logits[:, 1], weed_indices)
-        loss5 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(weed_labels, weed_logits) \
-            + modified_dice_loss_object(weed_labels, weed_logits) + true_dice_loss(weed_labels, weed_logits)) * class_imbal_labels_buf[1]
+        loss5 = tf.reduce_mean(true_dice_loss(weed_labels, weed_logits))
         
         non_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
         non_weed_labels = tf.gather(batch_labels, non_weed_indices)
         non_weed_labels = tf.zeros_like(non_weed_labels, dtype=tf.float32)
         non_weed_logits = tf.gather(logits[:, 1], non_weed_indices)
-        loss6 = tf.reduce_mean(tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)(non_weed_labels, non_weed_logits) \
-            + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits) + false_dice_loss(non_weed_labels, non_weed_logits)) * (1 - class_imbal_labels_buf[1])
+        loss5 += tf.reduce_mean(false_dice_loss(non_weed_labels, non_weed_logits))
 
-        batch_labels = tf.cast(batch_labels, tf.int32)
-        batch_labels = tf.one_hot(batch_labels, FLAGS.total_classes)
-        loss7 = categorical_focal_loss(alpha=[[class_imbal_labels_buf[0]], [class_imbal_labels_buf[1]], [class_imbal_labels_buf[2]]])(batch_labels, tf.nn.softmax(logits))
 
-        loss = loss1 + loss2 + loss3 + loss4 + loss5 + loss6 + loss7
+        non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
+        non_background_labels = tf.gather(batch_labels, non_background_indices)
+        non_background_labels = tf.cast(non_background_labels, tf.int32)
+        non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
+        crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
+        loss1 = categorical_focal_loss(alpha=[[class_imbal_labels_buf[0], class_imbal_labels_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits))
+        
 
-    grads = tape.gradient(loss, model.trainable_variables)
+        loss = loss4 + loss5 + loss1
+        
+        total_loss = loss + loss2
+
+    grads = tape.gradient(total_loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
-
-    return loss
+    
+    return total_loss
 
 
 # yilog(h(xi;θ))+(1−yi)log(1−h(xi;θ))
@@ -303,7 +313,6 @@ def main():
     out = model.get_layer("activation_decoder_2_upsample").output
     out = tf.keras.layers.Conv2D(FLAGS.total_classes, (1, 1))(out)
     model = tf.keras.Model(inputs=model.input, outputs=out)
-    model2 = tf.keras.Model(inputs=model.input, outputs=out)
 
     for layer in model.layers:
         if isinstance(layer, tf.keras.layers.BatchNormalization):
@@ -373,6 +382,7 @@ def main():
                 batch_labels = np.squeeze(batch_labels, -1)
 
 
+                
                 class_imbal_labels = batch_labels
                 class_imbal_labels_buf = 0.
                 for i in range(FLAGS.batch_size):
@@ -380,7 +390,7 @@ def main():
                     class_imbal_label = np.reshape(class_imbal_label, [FLAGS.img_size*FLAGS.img_size, ])
                     count_c_i_lab = np.bincount(class_imbal_label, minlength=FLAGS.total_classes)
                     class_imbal_labels_buf += count_c_i_lab
-                class_imbal_labels_buf /= 1.
+                class_imbal_labels_buf /= FLAGS.batch_size
                 class_imbal_labels_buf = class_imbal_labels_buf[0:FLAGS.total_classes]
                 object_buf = np.array([class_imbal_labels_buf[2], class_imbal_labels_buf[0] + class_imbal_labels_buf[1]], dtype=np.float32)
                 crop_buf = np.array([class_imbal_labels_buf[2]+class_imbal_labels_buf[1], class_imbal_labels_buf[0]], dtype=np.float32)
@@ -390,12 +400,14 @@ def main():
                 object_buf = (np.max(object_buf / np.sum(object_buf)) + 1 - (object_buf / np.sum(object_buf)))
                 crop_buf = (np.max(crop_buf / np.sum(crop_buf)) + 1 - (crop_buf / np.sum(crop_buf)))
                 weed_buf = (np.max(weed_buf / np.sum(weed_buf)) + 1 - (weed_buf / np.sum(weed_buf)))
-                class_imbal_labels_buf = tf.nn.softmax(class_imbal_labels_buf).numpy()
+
+                class_imbal_labels_buf = tf.nn.softmax(class_imbal_labels_buf[0:FLAGS.total_classes-1]).numpy()
+
                 object_buf = tf.nn.softmax(object_buf).numpy()
                 crop_buf = tf.nn.softmax(crop_buf).numpy()
                 weed_buf = tf.nn.softmax(weed_buf).numpy()
 
-                loss = cal_loss(model, model2, batch_images, batch_labels, class_imbal_labels_buf, object_buf,
+                loss = cal_loss(model, batch_images, batch_labels, class_imbal_labels_buf, object_buf,
                                 crop_buf, weed_buf)
                 if count % 10 == 0:
                     print("Epoch: {} [{}/{}] loss = {}".format(epoch, step+1, tr_idx, loss))
@@ -403,22 +415,19 @@ def main():
                 if count % 100 == 0:
     
                     output = run_model(model, batch_images, False)
-                    att_crop_output = tf.nn.sigmoid(output[:, :, :, 0])
-                    att_weed_output = tf.nn.sigmoid(output[:, :, :, 1])
-                    att_back_output = tf.nn.sigmoid(output[:, :, :, 2])
-                    temp = tf.nn.softmax(output[:, :, :, 0:2], -1)
+                    object_output = tf.nn.sigmoid(output[:, :, :, 2])
+                    crop_weed_output = tf.nn.softmax(output[:, :, :, 0:2], -1)
                     for i in range(FLAGS.batch_size):
                         label = tf.cast(batch_labels[i], tf.int32).numpy()
-                        att_crop = att_crop_output[i].numpy()
-                        att_weed = att_weed_output[i].numpy()
-                        att_back = att_back_output[i].numpy()
-                        image = output[i].numpy()
-                        # image[:, :, 0] = image[:, :, 0] * att_crop
-                        # image[:, :, 1] = image[:, :, 1] * att_weed
-                        # image[:, :, 2] = image[:, :, 2] * att_back
-                        image = tf.nn.softmax(image, -1)
-                        image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
-                        pred_mask_color = color_map[image]
+                        object_image = object_output[i]
+                        object_image = tf.where(object_image >= 0.5, 1, 0).numpy()
+                        false_object_indices = np.where(object_image == 0)
+
+                        crop_weed_image = tf.cast(tf.argmax(crop_weed_output[i], -1), tf.int32).numpy()
+                        crop_weed_image[false_object_indices] = 2
+                        image = crop_weed_image
+
+                        pred_mask_color = color_map[crop_weed_image]
                         label_mask_color = color_map[label]
 
                         temp_img = np.concatenate((image[:, :, np.newaxis], image[:, :, np.newaxis], image[:, :, np.newaxis]), -1)
@@ -447,23 +456,20 @@ def main():
                 for j in range(FLAGS.batch_size):
                     batch_image = tf.expand_dims(batch_images[j], 0)
                     output = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                    temp = tf.nn.softmax(output[0, :, :, 0:2], -1)
-                    att_crop = tf.nn.sigmoid(output[0, :, :, 0])
-                    att_weed = tf.nn.sigmoid(output[0, :, :, 1])
-                    att_back = tf.nn.sigmoid(output[0, :, :, 2])
-                    image = output[0].numpy()
-                    # image[:, :, 0] = image[:, :, 0] * att_crop
-                    # image[:, :, 1] = image[:, :, 1] * att_weed
-                    # image[:, :, 2] = image[:, :, 2] * att_back
-                    image = tf.nn.softmax(image, -1)
-                    image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
+                    object_output = tf.nn.sigmoid(output[0, :, :, 2])
+                    object_output = tf.where(object_output >= 0.5, 1, 0).numpy()
+                    false_object_indices = np.where(object_output == 0)
+
+                    crop_weed_output = tf.nn.softmax(output[0, :, :, 0:2], -1)
+                    crop_weed_output = tf.cast(tf.argmax(crop_weed_output, -1), tf.int32).numpy()
+                    crop_weed_output[false_object_indices] = 2
+                    image = crop_weed_output
 
                     batch_label = batch_labels[j]
                     batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
                     batch_label = np.where(batch_label == 255, 0, batch_label)
                     batch_label = np.where(batch_label == 128, 1, batch_label)
-
 
                     miou_, crop_iou_, weed_iou_ = Measurement(predict=image,
                                         label=batch_label, 
@@ -521,16 +527,14 @@ def main():
                 for j in range(1):
                     batch_image = tf.expand_dims(batch_images[j], 0)
                     output = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                    temp = tf.nn.softmax(output[0, :, :, 0:2], -1)
-                    att_crop = tf.nn.sigmoid(output[0, :, :, 0])
-                    att_weed = tf.nn.sigmoid(output[0, :, :, 1])
-                    att_back = tf.nn.sigmoid(output[0, :, :, 2])
-                    image = output[0].numpy()
-                    # image[:, :, 0] = image[:, :, 0] * att_crop
-                    # image[:, :, 1] = image[:, :, 1] * att_weed
-                    # image[:, :, 2] = image[:, :, 2] * att_back
-                    image = tf.nn.softmax(image, -1)
-                    image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
+                    object_output = tf.nn.sigmoid(output[0, :, :, 2])
+                    object_output = tf.where(object_output >= 0.5, 1, 0).numpy()
+                    false_object_indices = np.where(object_output == 0)
+
+                    crop_weed_output = tf.nn.softmax(output[0, :, :, 0:2], -1)
+                    crop_weed_output = tf.cast(tf.argmax(crop_weed_output, -1), tf.int32).numpy()
+                    crop_weed_output[false_object_indices] = 2
+                    image = crop_weed_output
 
                     batch_label = batch_labels[j]
                     batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
@@ -589,16 +593,14 @@ def main():
                 for j in range(1):
                     batch_image = tf.expand_dims(batch_images[j], 0)
                     output = run_model(model, batch_image, False) # type?? batch label?? ???? type???? ?????־?????
-                    temp = tf.nn.softmax(output[0, :, :, 0:2], -1)
-                    att_crop = tf.nn.sigmoid(output[0, :, :, 0])
-                    att_weed = tf.nn.sigmoid(output[0, :, :, 1])
-                    att_back = tf.nn.sigmoid(output[0, :, :, 2])
-                    image = output[0].numpy()
-                    # image[:, :, 0] = image[:, :, 0] * att_crop
-                    # image[:, :, 1] = image[:, :, 1] * att_weed
-                    # image[:, :, 2] = image[:, :, 2] * att_back
-                    image = tf.nn.softmax(image, -1)
-                    image = tf.cast(tf.argmax(image, -1), tf.int32).numpy()
+                    object_output = tf.nn.sigmoid(output[0, :, :, 2])
+                    object_output = tf.where(object_output >= 0.5, 1, 0).numpy()
+                    false_object_indices = np.where(object_output == 0)
+
+                    crop_weed_output = tf.nn.softmax(output[0, :, :, 0:2], -1)
+                    crop_weed_output = tf.cast(tf.argmax(crop_weed_output, -1), tf.int32).numpy()
+                    crop_weed_output[false_object_indices] = 2
+                    image = crop_weed_output
 
                     batch_label = batch_labels[j]
                     batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
