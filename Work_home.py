@@ -58,7 +58,7 @@ def tr_func(image_list, label_list):
     w = tf.cast(tf.math.ceil(w[0]), tf.int32)
 
     img = tf.io.read_file(image_list)
-    img = tf.image.decode_jpeg(img, 3)
+    img = tf.image.decode_png(img, 3)
     img = tf.image.resize(img, [FLAGS.img_size, FLAGS.img_size])
     img = tf.image.random_brightness(img, max_delta=50.)
     img = tf.image.random_saturation(img, lower=0.5, upper=1.5)
@@ -67,6 +67,7 @@ def tr_func(image_list, label_list):
     img = tf.clip_by_value(img, 0, 255)
     no_img = img
     img = img[:, :, ::-1] - tf.constant([103.939, 116.779, 123.68]) # 평균값 보정
+    # img = img / 255.
 
     lab = tf.io.read_file(label_list)
     lab = tf.image.decode_png(lab, 1)
@@ -82,10 +83,11 @@ def tr_func(image_list, label_list):
 def test_func(image_list, label_list):
 
     img = tf.io.read_file(image_list)
-    img = tf.image.decode_jpeg(img, 3)
+    img = tf.image.decode_png(img, 3)
     img = tf.image.resize(img, [FLAGS.img_size, FLAGS.img_size])
     img = tf.clip_by_value(img, 0, 255)
     img = img[:, :, ::-1] - tf.constant([103.939, 116.779, 123.68]) # 평균값 보정
+    # img = img / 255.
 
     lab = tf.io.read_file(label_list)
     lab = tf.image.decode_png(lab, 1)
@@ -97,11 +99,12 @@ def test_func(image_list, label_list):
 def test_func2(image_list, label_list):
 
     img = tf.io.read_file(image_list)
-    img = tf.image.decode_jpeg(img, 3)
+    img = tf.image.decode_png(img, 3)
     img = tf.image.resize(img, [FLAGS.img_size, FLAGS.img_size])
     img = tf.clip_by_value(img, 0, 255)
     temp_img = img
     img = img[:, :, ::-1] - tf.constant([103.939, 116.779, 123.68]) # 평균값 보정
+    # img = img / 255.
 
     lab = tf.io.read_file(label_list)
     lab = tf.image.decode_png(lab, 1)
@@ -243,13 +246,15 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         background_labels = tf.gather(batch_labels, background_indices)
         background_labels = tf.zeros_like(background_labels, dtype=tf.float32)
         background_logits = tf.gather(logits[:, 2], background_indices)
-        loss2 = tf.reduce_mean(false_dice_loss(background_labels, background_logits))
+        loss2 = tf.reduce_mean(false_dice_loss(background_labels, background_logits) \
+                               + modified_dice_loss_nonobject(background_labels, background_logits))
 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
         non_background_labels = tf.gather(batch_labels, non_background_indices)
         non_background_labels = tf.ones_like(non_background_labels, dtype=tf.float32)
         non_background_logits = tf.gather(logits[:, 2], non_background_indices)
-        loss2 += tf.reduce_mean(true_dice_loss(non_background_labels, non_background_logits))
+        loss2 += tf.reduce_mean(true_dice_loss(non_background_labels, non_background_logits) \
+                                + modified_dice_loss_object(non_background_labels, non_background_logits))
 
 
         # 여기에다 focal binary for object 를 추가해주자 (아래와 동일하게)
@@ -269,33 +274,44 @@ def cal_loss(model, images, labels, class_imbal_labels_buf, object_buf, crop_buf
         non_crop_labels = tf.gather(batch_labels, non_crop_indices)
         non_crop_labels = tf.zeros_like(non_crop_labels, dtype=tf.float32)
         non_crop_logits = tf.gather(logits[:, 0], non_crop_indices)
-        loss4 += tf.reduce_mean(false_dice_loss(non_crop_labels, non_crop_logits))
+        loss4 += tf.reduce_mean(false_dice_loss(non_crop_labels, non_crop_logits) \
+                                + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits))
+        
+        only_crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1).numpy()
+        only_crop_labels = np.zeros([FLAGS.batch_size*FLAGS.img_size*FLAGS.img_size,], np.uint8)
+        only_crop_labels[only_crop_indices] = 1
+        only_crop_labels = tf.cast(only_crop_labels, tf.float32)
+        loss4 += binary_focal_loss(alpha=crop_buf[1])(only_crop_labels, tf.nn.sigmoid(logits[:, 0]))
         
         # Dice for weed
         weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
         weed_labels = tf.gather(batch_labels, weed_indices)
         weed_labels = tf.ones_like(weed_labels, dtype=tf.float32)
         weed_logits = tf.gather(logits[:, 1], weed_indices)
-        loss5 = tf.reduce_mean(true_dice_loss(weed_labels, weed_logits))
+        loss5 = tf.reduce_mean(true_dice_loss(weed_labels, weed_logits) \
+                               + modified_dice_loss_object(weed_labels, weed_logits))
         
         non_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
         non_weed_labels = tf.gather(batch_labels, non_weed_indices)
         non_weed_labels = tf.zeros_like(non_weed_labels, dtype=tf.float32)
         non_weed_logits = tf.gather(logits[:, 1], non_weed_indices)
-        loss5 += tf.reduce_mean(false_dice_loss(non_weed_labels, non_weed_logits))
-
+        loss5 += tf.reduce_mean(false_dice_loss(non_weed_labels, non_weed_logits) \
+                                + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits))
+        
+        only_weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
+        only_weed_labels = np.zeros([FLAGS.batch_size*FLAGS.img_size*FLAGS.img_size,], np.uint8)
+        only_weed_labels[only_weed_indices] = 1
+        only_weed_labels = tf.cast(only_weed_labels, tf.float32)
+        loss5 += binary_focal_loss(alpha=weed_buf[1])(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
         non_background_labels = tf.gather(batch_labels, non_background_indices)
         non_background_labels = tf.cast(non_background_labels, tf.int32)
         non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
         crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
-        loss1 = categorical_focal_loss(alpha=[[class_imbal_labels_buf[0], class_imbal_labels_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits))
+        loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
         
-
-        loss = loss4 + loss5 + loss1
-        
-        total_loss = loss + loss2
+        total_loss = loss1 + loss2 + loss5 + loss4
 
     grads = tape.gradient(total_loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
@@ -370,7 +386,43 @@ def main():
             train_ge = train_ge.map(tr_func)
             train_ge = train_ge.batch(FLAGS.batch_size)
             train_ge = train_ge.prefetch(tf.data.experimental.AUTOTUNE)
+            tr_iter = iter(train_ge)
+            tr_idx = len(train_img_dataset) // FLAGS.batch_size
 
+            class_imbal_labels_buf = 0.
+            for step in range(tr_idx):
+                _, _, batch_labels = next(tr_iter)  
+                batch_labels = batch_labels.numpy()
+                batch_labels = np.where(batch_labels == FLAGS.ignore_label, 2, batch_labels)    # 2 is void
+                batch_labels = np.where(batch_labels == 255, 0, batch_labels)
+                batch_labels = np.where(batch_labels == 128, 1, batch_labels)
+                batch_labels = np.squeeze(batch_labels, -1)
+
+                class_imbal_labels = batch_labels
+                for i in range(FLAGS.batch_size):
+                    class_imbal_label = class_imbal_labels[i]
+                    class_imbal_label = np.reshape(class_imbal_label, [FLAGS.img_size*FLAGS.img_size, ])
+                    count_c_i_lab = np.bincount(class_imbal_label, minlength=FLAGS.total_classes)
+                    class_imbal_labels_buf += count_c_i_lab
+            class_imbal_labels_buf = class_imbal_labels_buf[0:FLAGS.total_classes]
+            object_buf = np.array([class_imbal_labels_buf[2], class_imbal_labels_buf[0] + class_imbal_labels_buf[1]], dtype=np.float32)
+            crop_buf = np.array([class_imbal_labels_buf[1], class_imbal_labels_buf[0]], dtype=np.float32)
+            weed_buf = np.array([class_imbal_labels_buf[0], class_imbal_labels_buf[1]], dtype=np.float32)
+
+            class_imbal_labels_buf = (np.max(class_imbal_labels_buf / np.sum(class_imbal_labels_buf)) + 1 - (class_imbal_labels_buf / np.sum(class_imbal_labels_buf)))
+            object_buf = (np.max(object_buf / np.sum(object_buf)) + 1 - (object_buf / np.sum(object_buf)))
+            crop_buf = (np.max(crop_buf / np.sum(crop_buf)) + 1 - (crop_buf / np.sum(crop_buf)))
+            weed_buf = (np.max(weed_buf / np.sum(weed_buf)) + 1 - (weed_buf / np.sum(weed_buf)))
+
+            class_imbal_labels_buf = tf.nn.softmax(class_imbal_labels_buf[0:FLAGS.total_classes-1]).numpy()
+            object_buf = tf.nn.softmax(object_buf).numpy()
+            crop_buf = tf.nn.softmax(crop_buf).numpy()
+            weed_buf = tf.nn.softmax(weed_buf).numpy()
+
+            print(class_imbal_labels_buf)
+            print(object_buf)
+            print(crop_buf)
+            print(weed_buf)
             tr_iter = iter(train_ge)
             tr_idx = len(train_img_dataset) // FLAGS.batch_size
             for step in range(tr_idx):
@@ -381,34 +433,7 @@ def main():
                 batch_labels = np.where(batch_labels == 128, 1, batch_labels)
                 batch_labels = np.squeeze(batch_labels, -1)
 
-
-                
-                class_imbal_labels = batch_labels
-                class_imbal_labels_buf = 0.
-                for i in range(FLAGS.batch_size):
-                    class_imbal_label = class_imbal_labels[i]
-                    class_imbal_label = np.reshape(class_imbal_label, [FLAGS.img_size*FLAGS.img_size, ])
-                    count_c_i_lab = np.bincount(class_imbal_label, minlength=FLAGS.total_classes)
-                    class_imbal_labels_buf += count_c_i_lab
-                class_imbal_labels_buf /= FLAGS.batch_size
-                class_imbal_labels_buf = class_imbal_labels_buf[0:FLAGS.total_classes]
-                object_buf = np.array([class_imbal_labels_buf[2], class_imbal_labels_buf[0] + class_imbal_labels_buf[1]], dtype=np.float32)
-                crop_buf = np.array([class_imbal_labels_buf[2]+class_imbal_labels_buf[1], class_imbal_labels_buf[0]], dtype=np.float32)
-                weed_buf = np.array([class_imbal_labels_buf[2]+class_imbal_labels_buf[0], class_imbal_labels_buf[1]], dtype=np.float32)
-                
-                class_imbal_labels_buf = (np.max(class_imbal_labels_buf / np.sum(class_imbal_labels_buf)) + 1 - (class_imbal_labels_buf / np.sum(class_imbal_labels_buf)))
-                object_buf = (np.max(object_buf / np.sum(object_buf)) + 1 - (object_buf / np.sum(object_buf)))
-                crop_buf = (np.max(crop_buf / np.sum(crop_buf)) + 1 - (crop_buf / np.sum(crop_buf)))
-                weed_buf = (np.max(weed_buf / np.sum(weed_buf)) + 1 - (weed_buf / np.sum(weed_buf)))
-
-                class_imbal_labels_buf = tf.nn.softmax(class_imbal_labels_buf[0:FLAGS.total_classes-1]).numpy()
-
-                object_buf = tf.nn.softmax(object_buf).numpy()
-                crop_buf = tf.nn.softmax(crop_buf).numpy()
-                weed_buf = tf.nn.softmax(weed_buf).numpy()
-
-                loss = cal_loss(model, batch_images, batch_labels, class_imbal_labels_buf, object_buf,
-                                crop_buf, weed_buf)
+                loss = cal_loss(model, batch_images, batch_labels, class_imbal_labels_buf, object_buf, crop_buf, weed_buf)
                 if count % 10 == 0:
                     print("Epoch: {} [{}/{}] loss = {}".format(epoch, step+1, tr_idx, loss))
 
