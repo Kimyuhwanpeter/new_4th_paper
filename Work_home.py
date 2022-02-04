@@ -1,8 +1,8 @@
 # -*- coding:utf-8 -*-
 from charset_normalizer import from_bytes
-from modified_deeplab_V3 import *
 from PFB_measurement import Measurement
 from random import shuffle, random
+from tensorflow.keras import backend as K
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,9 +21,9 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            
                            "image_path": "/content/raw_aug_rgb_img/",
                            
-                           "pre_checkpoint": False,
+                           "pre_checkpoint": True,
                            
-                           "pre_checkpoint_path": "",
+                           "pre_checkpoint_path": "/content/drive/MyDrive/158",
                            
                            "lr": 0.0001,
 
@@ -66,8 +66,8 @@ def tr_func(image_list, label_list):
     img = tf.image.random_contrast(img, lower=0.5, upper=1.5)
     img = tf.clip_by_value(img, 0, 255)
     no_img = img
-    img = img[:, :, ::-1] - tf.constant([103.939, 116.779, 123.68]) # 평균값 보정
-    # img = img / 255.
+    # img = img[:, :, ::-1] - tf.constant([103.939, 116.779, 123.68]) # 평균값 보정
+    img = img / 255.
 
     lab = tf.io.read_file(label_list)
     lab = tf.image.decode_png(lab, 1)
@@ -86,8 +86,8 @@ def test_func(image_list, label_list):
     img = tf.image.decode_png(img, 3)
     img = tf.image.resize(img, [FLAGS.img_size, FLAGS.img_size])
     img = tf.clip_by_value(img, 0, 255)
-    img = img[:, :, ::-1] - tf.constant([103.939, 116.779, 123.68]) # 평균값 보정
-    # img = img / 255.
+    # img = img[:, :, ::-1] - tf.constant([103.939, 116.779, 123.68]) # 평균값 보정
+    img = img / 255.
 
     lab = tf.io.read_file(label_list)
     lab = tf.image.decode_png(lab, 1)
@@ -103,8 +103,8 @@ def test_func2(image_list, label_list):
     img = tf.image.resize(img, [FLAGS.img_size, FLAGS.img_size])
     img = tf.clip_by_value(img, 0, 255)
     temp_img = img
-    img = img[:, :, ::-1] - tf.constant([103.939, 116.779, 123.68]) # 평균값 보정
-    # img = img / 255.
+    # img = img[:, :, ::-1] - tf.constant([103.939, 116.779, 123.68]) # 평균값 보정
+    img = img / 255.
 
     lab = tf.io.read_file(label_list)
     lab = tf.image.decode_png(lab, 1)
@@ -325,10 +325,7 @@ def main():
     # 마지막 plain은 objecttines에 대한 True or False값 즉 (mask값이고), 라벨은 annotation 이미지임 (crop/weed)
     # 학습이미지에 대해 online augmentation을 진행--> 전처리로서 필터링을 하던지 해서 , 피사체에 대한 high frequency 성분을
     # 가지고오자
-    model = DeepLabV3Plus(FLAGS.img_size, FLAGS.img_size, 34)
-    out = model.get_layer("activation_decoder_2_upsample").output
-    out = tf.keras.layers.Conv2D(FLAGS.total_classes, (1, 1))(out)
-    model = tf.keras.Model(inputs=model.input, outputs=out)
+    model = model2 = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=FLAGS.total_classes) # 두개의 모델에서 한곳은 object, 다른 한 곳은 crop and weed로 설정하고 해볼것!
 
     for layer in model.layers:
         if isinstance(layer, tf.keras.layers.BatchNormalization):
