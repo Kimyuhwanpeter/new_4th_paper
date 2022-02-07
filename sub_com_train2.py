@@ -1,4 +1,6 @@
 # -*- coding:utf-8 -*-
+from charset_normalizer import from_bytes
+from base_UNET import *
 from modified_deeplab_V3 import *
 from PFB_measurement import Measurement
 from random import shuffle, random
@@ -8,17 +10,17 @@ import numpy as np
 import easydict
 import os
 
-FLAGS = easydict.EasyDict({"img_size": 512,
+FLAGS = easydict.EasyDict({"img_size": 384,
 
-                           "train_txt_path": "D:/[1]DB/[5]4th_paper_DB/crop_weed/datasets_IJRR2017/train.txt",
+                           "train_txt_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/train.txt",
 
-                           "val_txt_path": "D:/[1]DB/[5]4th_paper_DB/crop_weed/datasets_IJRR2017/val.txt",
+                           "val_txt_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/val.txt",
 
-                           "test_txt_path": "D:/[1]DB/[5]4th_paper_DB/crop_weed/datasets_IJRR2017/test.txt",
+                           "test_txt_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/test.txt",
                            
-                           "label_path": "D:/[1]DB/[5]4th_paper_DB/crop_weed/datasets_IJRR2017/raw_aug_gray_mask/",
+                           "label_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/raw_aug_gray_mask/",
                            
-                           "image_path": "D:/[1]DB/[5]4th_paper_DB/crop_weed/datasets_IJRR2017/raw_aug_rgb_img/",
+                           "image_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/raw_aug_rgb_img/",
                            
                            "pre_checkpoint": False,
                            
@@ -34,13 +36,13 @@ FLAGS = easydict.EasyDict({"img_size": 512,
 
                            "ignore_label": 0,
 
-                           "batch_size": 2,
+                           "batch_size": 4,
 
-                           "sample_images": "C:/Users/Yuhwan/Downloads/sample_images",
+                           "sample_images": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/sample_images",
 
                            "save_checkpoint": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint",
 
-                           "save_print": "C:/Users/Yuhwan/Downloads/_.txt",
+                           "save_print": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_out.txt",
 
                            "train_loss_graphs": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_loss.txt",
 
@@ -227,14 +229,8 @@ def main():
     # 마지막 plain은 objecttines에 대한 True or False값 즉 (mask값이고), 라벨은 annotation 이미지임 (crop/weed)
     # 학습이미지에 대해 online augmentation을 진행--> 전처리로서 필터링을 하던지 해서 , 피사체에 대한 high frequency 성분을
     # 가지고오자
-    model = model2 = DeepLabV3Plus(FLAGS.img_size, FLAGS.img_size, 34)
-    out = model.get_layer("activation_decoder_2_upsample").output
-    out = tf.keras.layers.Conv2D(1, (1,1), name="output_layer_1")(out)
-    model = tf.keras.Model(inputs=model.input, outputs=out)
-    
-    out = model2.get_layer("activation_decoder_2_upsample").output
-    out = tf.keras.layers.Conv2D(1, (1,1), name="output_layer_2")(out)
-    model2 = tf.keras.Model(inputs=model.input, outputs=out)
+    model = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=1)
+    model2 = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=1)
 
     model.summary()
     model2.summary()
@@ -327,16 +323,16 @@ def main():
                         crop_image = np.where(crop_image.numpy() >= 0.5, 1, 0)  # 여기를 고쳐야 할것같음
                         weed_image = np.where(weed_image.numpy() >= 0.5, 2, 0)
                         crop_weed_image = crop_image + weed_image
-                        crop_weed_image = np.where(crop_weed_image == 3, 0, crop_weed_image)
-                        crop_indices = np.where(crop_weed_logits==1)
-                        weed_indices = np.where(crop_weed_logits==2)
-                        back_indices = np.where(crop_weed_logits==0)
-                        crop_weed_logits = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
-                        crop_weed_logits[crop_indices] = 0
-                        crop_weed_logits[weed_indices] = 1
-                        crop_weed_logits[back_indices] = 2
-                        temp_img = crop_weed_image  # 그런데 이렇게하면, 유일하게 발생하는 문제는
-                        image = crop_weed_image
+                        crop_weed_image = np.squeeze(np.where(crop_weed_image == 3, 0, crop_weed_image), -1)
+                        crop_indices = (np.where(crop_weed_image==1))
+                        weed_indices = (np.where(crop_weed_image==2))
+                        back_indices = (np.where(crop_weed_image==0))
+                        crop_weed_image = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
+                        crop_weed_image[crop_indices] = 0
+                        crop_weed_image[weed_indices] = 1
+                        crop_weed_image[back_indices] = 2
+                        temp_img = np.expand_dims(crop_weed_image, -1)  # 그런데 이렇게하면, 유일하게 발생하는 문제는
+                        image = np.expand_dims(crop_weed_image, -1)
 
                         pred_mask_color = color_map[temp_img]  # 논문그림처럼 할것!
                         pred_mask_color = np.squeeze(pred_mask_color, 2)
@@ -392,6 +388,7 @@ def main():
                     crop_weed_logits[weed_indices] = 1
                     crop_weed_logits[back_indices] = 2
 
+
                     batch_label = batch_label.numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
                     batch_label = np.where(batch_label == 255, 0, batch_label)
@@ -407,37 +404,32 @@ def main():
                     weed_label[weed_indices] = 1
 
 
-                    miou_, crop_iou_, weed_iou_ = Measurement(crop_predict=crop_logits,
-                                                              weed_predict=weed_logits,
-                                                              crop_label=crop_label,
-                                                              weed_label=weed_label,
-                                                              shape=[FLAGS.img_size*FLAGS.img_size, ], 
-                                                              total_classes=2).MIOU()
-                    # f1_score_, recall_, _, _, _, _ = Measurement(predict=predict_temp,
-                    #                         label=batch_label,
-                    #                         shape=[FLAGS.img_size*FLAGS.img_size, ],
-                    #                         total_classes=FLAGS.total_classes).F1_score_and_recall()
-                    # tdr_ = Measurement(predict=predict_temp,
-                    #                         label=batch_label,
-                    #                         shape=[FLAGS.img_size*FLAGS.img_size, ],
-                    #                         total_classes=FLAGS.total_classes).TDR()
+                    miou_, crop_iou_, weed_iou_ = Measurement(predict=crop_weed_logits,
+                                        label=batch_label, 
+                                        shape=[FLAGS.img_size*FLAGS.img_size, ], 
+                                        total_classes=FLAGS.total_classes).MIOU()
+                    f1_score_, recall_, _, _, _, _ = Measurement(predict=crop_weed_logits,
+                                            label=batch_label,
+                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
+                                            total_classes=FLAGS.total_classes).F1_score_and_recall()
+                    tdr_ = Measurement(predict=crop_weed_logits,
+                                            label=batch_label,
+                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
+                                            total_classes=FLAGS.total_classes).TDR()
 
                     miou += miou_
-                    # f1_score += f1_score_
-                    # sensitivity += recall_
-                    # tdr += tdr_
+                    f1_score += f1_score_
+                    sensitivity += recall_
+                    tdr += tdr_
                     crop_iou += crop_iou_
                     weed_iou += weed_iou_
             print("=================================================================================================================================================")
-            print("Epoch: %3d, train mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f)" % (epoch, miou / len(train_img_dataset),
-                                                                                        crop_iou / len(train_img_dataset),
-                                                                                        weed_iou / len(train_img_dataset)))
-            # print("Epoch: %3d, train mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), train F1_score = %.4f, train sensitivity = %.4f, train TDR = %.4f" % (epoch, miou / len(train_img_dataset),
-            #                                                                                                                                      crop_iou / len(train_img_dataset),
-            #                                                                                                                                      weed_iou / len(train_img_dataset),
-            #                                                                                                                                       f1_score / len(train_img_dataset),
-            #                                                                                                                                       sensitivity / len(train_img_dataset),
-            #                                                                                                                                       tdr / len(train_img_dataset)))
+            print("Epoch: %3d, train mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), train F1_score = %.4f, train sensitivity = %.4f, train TDR = %.4f" % (epoch, miou / len(train_img_dataset),
+                                                                                                                                                 crop_iou / len(train_img_dataset),
+                                                                                                                                                 weed_iou / len(train_img_dataset),
+                                                                                                                                                  f1_score / len(train_img_dataset),
+                                                                                                                                                  sensitivity / len(train_img_dataset),
+                                                                                                                                                  tdr / len(train_img_dataset)))
             output_text.write("Epoch: ")
             output_text.write(str(epoch))
             output_text.write("===================================================================")
@@ -448,12 +440,12 @@ def main():
             output_text.write("%.4f" % (crop_iou / len(train_img_dataset)))
             output_text.write(", weed_iou: ")
             output_text.write("%.4f" % (weed_iou / len(train_img_dataset)))
-            # output_text.write(", train F1_score: ")
-            # output_text.write("%.4f" % (f1_score / len(train_img_dataset)))
-            # output_text.write(", train sensitivity: ")
-            # output_text.write("%.4f" % (sensitivity / len(train_img_dataset)))
-            # output_text.write(", train TDR: ")
-            # output_text.write("%.4f" % (tdr / len(train_img_dataset)))
+            output_text.write(", train F1_score: ")
+            output_text.write("%.4f" % (f1_score / len(train_img_dataset)))
+            output_text.write(", train sensitivity: ")
+            output_text.write("%.4f" % (sensitivity / len(train_img_dataset)))
+            output_text.write(", train TDR: ")
+            output_text.write("%.4f" % (tdr / len(train_img_dataset)))
             output_text.write("\n")
 
             val_iter = iter(val_ge)
@@ -502,48 +494,49 @@ def main():
                     crop_label[crop_indices] = 1
                     weed_label[weed_indices] = 1
 
-                    miou_, crop_iou_, weed_iou_ = Measurement(crop_predict=crop_logits,
-                                                              weed_predict=weed_logits,
-                                                              crop_label=crop_label,
-                                                              weed_label=weed_label,
-                                                              shape=[FLAGS.img_size*FLAGS.img_size, ], 
-                                                              total_classes=2).MIOU()
-                    # f1_score_, recall_, _, _, _, _ = Measurement(predict=predict_temp,
-                    #                         label=batch_label,
-                    #                         shape=[FLAGS.img_size*FLAGS.img_size, ],
-                    #                         total_classes=FLAGS.total_classes).F1_score_and_recall()
-                    # tdr_ = Measurement(predict=predict_temp,
-                    #                         label=batch_label,
-                    #                         shape=[FLAGS.img_size*FLAGS.img_size, ],
-                    #                         total_classes=FLAGS.total_classes).TDR()
+                    batch_label = batch_labels[j]
+                    batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
+                    batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
+                    batch_label = np.where(batch_label == 255, 0, batch_label)
+                    batch_label = np.where(batch_label == 128, 1, batch_label)
+
+                    miou_, crop_iou_, weed_iou_ = Measurement(predict=crop_weed_logits,
+                                        label=batch_label, 
+                                        shape=[FLAGS.img_size*FLAGS.img_size, ], 
+                                        total_classes=FLAGS.total_classes).MIOU()
+                    f1_score_, recall_, _, _, _, _ = Measurement(predict=crop_weed_logits,
+                                            label=batch_label,
+                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
+                                            total_classes=FLAGS.total_classes).F1_score_and_recall()
+                    tdr_ = Measurement(predict=crop_weed_logits,
+                                            label=batch_label,
+                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
+                                            total_classes=FLAGS.total_classes).TDR()
 
                     miou += miou_
-                    # f1_score += f1_score_
-                    # sensitivity += recall_
-                    # tdr += tdr_
+                    f1_score += f1_score_
+                    sensitivity += recall_
+                    tdr += tdr_
                     crop_iou += crop_iou_
                     weed_iou += weed_iou_
-            print("Epoch: %3d, train mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f)" % (epoch, miou / len(val_img_dataset),
-                                                                                        crop_iou / len(val_img_dataset),
-                                                                                        weed_iou / len(val_img_dataset)))
-            # print("Epoch: %3d, val mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), val F1_score = %.4f, val sensitivity = %.4f, val TDR = %.4f" % (epoch, miou / len(val_img_dataset),
-            #                                                                                                                              crop_iou / len(val_img_dataset),
-            #                                                                                                                              weed_iou / len(val_img_dataset),
-            #                                                                                                                              f1_score / len(val_img_dataset),
-            #                                                                                                                              sensitivity / len(val_img_dataset),
-            #                                                                                                                              tdr / len(val_img_dataset)))
+            print("Epoch: %3d, val mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), val F1_score = %.4f, val sensitivity = %.4f, val TDR = %.4f" % (epoch, miou / len(val_img_dataset),
+                                                                                                                                         crop_iou / len(val_img_dataset),
+                                                                                                                                         weed_iou / len(val_img_dataset),
+                                                                                                                                         f1_score / len(val_img_dataset),
+                                                                                                                                         sensitivity / len(val_img_dataset),
+                                                                                                                                         tdr / len(val_img_dataset)))
             output_text.write("val mIoU: ")
             output_text.write("%.4f" % (miou / len(val_img_dataset)))
             output_text.write(", crop_iou: ")
             output_text.write("%.4f" % (crop_iou / len(val_img_dataset)))
             output_text.write(", weed_iou: ")
             output_text.write("%.4f" % (weed_iou / len(val_img_dataset)))
-            # output_text.write(", val F1_score: ")
-            # output_text.write("%.4f" % (f1_score / len(val_img_dataset)))
-            # output_text.write(", val sensitivity: ")
-            # output_text.write("%.4f" % (sensitivity / len(val_img_dataset)))
-            # output_text.write(", val TDR: ")
-            # output_text.write("%.4f" % (tdr / len(val_img_dataset)))
+            output_text.write(", val F1_score: ")
+            output_text.write("%.4f" % (f1_score / len(val_img_dataset)))
+            output_text.write(", val sensitivity: ")
+            output_text.write("%.4f" % (sensitivity / len(val_img_dataset)))
+            output_text.write(", val TDR: ")
+            output_text.write("%.4f" % (tdr / len(val_img_dataset)))
             output_text.write("\n")
 
             test_iter = iter(test_ge)
@@ -592,36 +585,31 @@ def main():
                     crop_label[crop_indices] = 1
                     weed_label[weed_indices] = 1
 
-                    miou_, crop_iou_, weed_iou_ = Measurement(crop_predict=crop_logits,
-                                                              weed_predict=weed_logits,
-                                                              crop_label=crop_label,
-                                                              weed_label=weed_label,
-                                                              shape=[FLAGS.img_size*FLAGS.img_size, ], 
-                                                              total_classes=2).MIOU()
-                    # f1_score_, recall_, _, _, _, _ = Measurement(predict=predict_temp,
-                    #                         label=batch_label,
-                    #                         shape=[FLAGS.img_size*FLAGS.img_size, ],
-                    #                         total_classes=FLAGS.total_classes).F1_score_and_recall()
-                    # tdr_ = Measurement(predict=predict_temp,
-                    #                         label=batch_label,
-                    #                         shape=[FLAGS.img_size*FLAGS.img_size, ],
-                    #                         total_classes=FLAGS.total_classes).TDR()
+                    miou_, crop_iou_, weed_iou_ = Measurement(predict=crop_weed_logits,
+                                        label=batch_label, 
+                                        shape=[FLAGS.img_size*FLAGS.img_size, ], 
+                                        total_classes=FLAGS.total_classes).MIOU()
+                    f1_score_, recall_, _, _, _, _ = Measurement(predict=crop_weed_logits,
+                                            label=batch_label,
+                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
+                                            total_classes=FLAGS.total_classes).F1_score_and_recall()
+                    tdr_ = Measurement(predict=crop_weed_logits,
+                                            label=batch_label,
+                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
+                                            total_classes=FLAGS.total_classes).TDR()
 
                     miou += miou_
-                    # f1_score += f1_score_
-                    # sensitivity += recall_
-                    # tdr += tdr_
+                    f1_score += f1_score_
+                    sensitivity += recall_
+                    tdr += tdr_
                     crop_iou += crop_iou_
                     weed_iou += weed_iou_
-            print("Epoch: %3d, train mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f)" % (epoch, miou / len(test_img_dataset),
-                                                                                        crop_iou / len(test_img_dataset),
-                                                                                        weed_iou / len(test_img_dataset)))
-            # print("Epoch: %3d, test mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), test F1_score = %.4f, test sensitivity = %.4f, test TDR = %.4f" % (epoch, miou / len(test_img_dataset),
-            #                                                                                                                                  crop_iou / len(test_img_dataset),
-            #                                                                                                                                  weed_iou / len(test_img_dataset),
-            #                                                                                                                                  f1_score / len(test_img_dataset),
-            #                                                                                                                                  sensitivity / len(test_img_dataset),
-            #                                                                                                                                  tdr / len(test_img_dataset)))
+            print("Epoch: %3d, test mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), test F1_score = %.4f, test sensitivity = %.4f, test TDR = %.4f" % (epoch, miou / len(test_img_dataset),
+                                                                                                                                             crop_iou / len(test_img_dataset),
+                                                                                                                                             weed_iou / len(test_img_dataset),
+                                                                                                                                             f1_score / len(test_img_dataset),
+                                                                                                                                             sensitivity / len(test_img_dataset),
+                                                                                                                                             tdr / len(test_img_dataset)))
             print("=================================================================================================================================================")
             output_text.write("test mIoU: ")
             output_text.write("%.4f" % (miou / len(test_img_dataset)))
@@ -629,24 +617,24 @@ def main():
             output_text.write("%.4f" % (crop_iou / len(test_img_dataset)))
             output_text.write(", weed_iou: ")
             output_text.write("%.4f" % (weed_iou / len(test_img_dataset)))
-            # output_text.write(", test F1_score: ")
-            # output_text.write("%.4f" % (f1_score / len(test_img_dataset)))
-            # output_text.write(", test sensitivity: ")
-            # output_text.write("%.4f" % (sensitivity / len(test_img_dataset)))
-            # output_text.write(", test TDR: ")
-            # output_text.write("%.4f" % (tdr / len(test_img_dataset)))
+            output_text.write(", test F1_score: ")
+            output_text.write("%.4f" % (f1_score / len(test_img_dataset)))
+            output_text.write(", test sensitivity: ")
+            output_text.write("%.4f" % (sensitivity / len(test_img_dataset)))
+            output_text.write(", test TDR: ")
+            output_text.write("%.4f" % (tdr / len(test_img_dataset)))
             output_text.write("\n")
             output_text.write("===================================================================")
             output_text.write("\n")
             output_text.flush()
 
-            #model_dir = "%s/%s" % (FLAGS.save_checkpoint, epoch)
-            #if not os.path.isdir(model_dir):
-            #    print("Make {} folder to store the weight!".format(epoch))
-            #    os.makedirs(model_dir)
-            #ckpt = tf.train.Checkpoint(model=model, optim=optim)
-            #ckpt_dir = model_dir + "/Crop_weed_model_{}.ckpt".format(epoch)
-            #ckpt.save(ckpt_dir)
+            model_dir = "%s/%s" % (FLAGS.save_checkpoint, epoch)
+            if not os.path.isdir(model_dir):
+               print("Make {} folder to store the weight!".format(epoch))
+               os.makedirs(model_dir)
+            ckpt = tf.train.Checkpoint(model=model, model2=model2, optim=optim, optim2=optim2)
+            ckpt_dir = model_dir + "/Crop_weed_model_{}.ckpt".format(epoch)
+            ckpt.save(ckpt_dir)
 
     # else:
     #     test_list = np.loadtxt(FLAGS.test_txt_path, dtype="<U200", skiprows=0, usecols=0)
