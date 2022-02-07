@@ -324,11 +324,17 @@ def main():
                         crop_image = tf.nn.sigmoid(crop_logits[i])
                         weed_image = tf.nn.sigmoid(weed_logits[i])
                         label = batch_labels[i]
-                        crop_image = np.where(crop_image.numpy() >= 0.5, 0, 2)
-                        weed_image = np.where(weed_image.numpy() >= 0.5, 1, 2)
+                        crop_image = np.where(crop_image.numpy() >= 0.5, 1, 0)  # 여기를 고쳐야 할것같음
+                        weed_image = np.where(weed_image.numpy() >= 0.5, 2, 0)
                         crop_weed_image = crop_image + weed_image
-                        crop_weed_image = np.where(crop_weed_image == 3, 2, crop_weed_image)
-                        crop_weed_image = np.where(crop_weed_image == 4, 2, crop_weed_image)
+                        crop_weed_image = np.where(crop_weed_image == 3, 0, crop_weed_image)
+                        crop_indices = np.where(crop_weed_logits==1)
+                        weed_indices = np.where(crop_weed_logits==2)
+                        back_indices = np.where(crop_weed_logits==0)
+                        crop_weed_logits = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
+                        crop_weed_logits[crop_indices] = 0
+                        crop_weed_logits[weed_indices] = 1
+                        crop_weed_logits[back_indices] = 2
                         temp_img = crop_weed_image  # 그런데 이렇게하면, 유일하게 발생하는 문제는
                         image = crop_weed_image
 
@@ -372,14 +378,19 @@ def main():
                     weed_output = weed_output[0, :, :, 0]
 
                     crop_logits = tf.nn.sigmoid(crop_output)
-                    crop_logits = np.where(crop_logits.numpy() >= 0.5, 0, 2)
+                    crop_logits = np.where(crop_logits.numpy() >= 0.5, 1, 0)
                     weed_logits = tf.nn.sigmoid(weed_output)
-                    weed_logits = np.where(weed_logits.numpy() >= 0.5, 1, 2)
+                    weed_logits = np.where(weed_logits.numpy() >= 0.5, 2, 0)
 
                     crop_weed_logits = crop_logits + weed_logits
-                    crop_weed_logits = np.where(crop_weed_logits == 3, 2, crop_weed_logits)
-                    crop_weed_logits = np.where(crop_weed_logits == 4, 2, crop_weed_logits)
-
+                    crop_weed_logits = np.where(crop_weed_logits == 3, 0, crop_weed_logits)
+                    crop_indices = np.where(crop_weed_logits==1)
+                    weed_indices = np.where(crop_weed_logits==2)
+                    back_indices = np.where(crop_weed_logits==0)
+                    crop_weed_logits = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
+                    crop_weed_logits[crop_indices] = 0
+                    crop_weed_logits[weed_indices] = 1
+                    crop_weed_logits[back_indices] = 2
 
                     batch_label = batch_label.numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
@@ -463,13 +474,19 @@ def main():
                     weed_output = weed_output[0, :, :, 0]
 
                     crop_logits = tf.nn.sigmoid(crop_output)
-                    crop_logits = np.where(crop_logits.numpy() >= 0.5, 0, 2)
+                    crop_logits = np.where(crop_logits.numpy() >= 0.5, 1, 0)
                     weed_logits = tf.nn.sigmoid(weed_output)
-                    weed_logits = np.where(weed_logits.numpy() >= 0.5, 1, 2)
+                    weed_logits = np.where(weed_logits.numpy() >= 0.5, 2, 0)
 
                     crop_weed_logits = crop_logits + weed_logits
-                    crop_weed_logits = np.where(crop_weed_logits == 3, 2, crop_weed_logits)
-                    crop_weed_logits = np.where(crop_weed_logits == 4, 2, crop_weed_logits)
+                    crop_weed_logits = np.where(crop_weed_logits == 3, 0, crop_weed_logits)
+                    crop_indices = np.where(crop_weed_logits==1)
+                    weed_indices = np.where(crop_weed_logits==2)
+                    back_indices = np.where(crop_weed_logits==0)
+                    crop_weed_logits = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
+                    crop_weed_logits[crop_indices] = 0
+                    crop_weed_logits[weed_indices] = 1
+                    crop_weed_logits[back_indices] = 2
 
                     batch_label = batch_label.numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
@@ -547,13 +564,19 @@ def main():
                     weed_output = weed_output[0, :, :, 0]
 
                     crop_logits = tf.nn.sigmoid(crop_output)
-                    crop_logits = np.where(crop_logits.numpy() >= 0.5, 0, 2)
+                    crop_logits = np.where(crop_logits.numpy() >= 0.5, 1, 0)
                     weed_logits = tf.nn.sigmoid(weed_output)
-                    weed_logits = np.where(weed_logits.numpy() >= 0.5, 1, 2)
+                    weed_logits = np.where(weed_logits.numpy() >= 0.5, 2, 0)
 
                     crop_weed_logits = crop_logits + weed_logits
-                    crop_weed_logits = np.where(crop_weed_logits == 3, 2, crop_weed_logits)
-                    crop_weed_logits = np.where(crop_weed_logits == 4, 2, crop_weed_logits)
+                    crop_weed_logits = np.where(crop_weed_logits == 3, 0, crop_weed_logits)
+                    crop_indices = np.where(crop_weed_logits==1)
+                    weed_indices = np.where(crop_weed_logits==2)
+                    back_indices = np.where(crop_weed_logits==0)
+                    crop_weed_logits = np.zeros([FLAGS.img_size, FLAGS.img_size], dtype=np.uint8)
+                    crop_weed_logits[crop_indices] = 0
+                    crop_weed_logits[weed_indices] = 1
+                    crop_weed_logits[back_indices] = 2
 
                     batch_label = batch_label.numpy()
                     batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
