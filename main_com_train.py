@@ -21,9 +21,9 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            
                            "image_path": "/yuhwan/yuhwan/Dataset/Segmentation/Crop_weed/datasets_IJRR2017/raw_aug_rgb_img/",
                            
-                           "pre_checkpoint": False,
+                           "pre_checkpoint": True,
                            
-                           "pre_checkpoint_path": "",
+                           "pre_checkpoint_path": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/BoniRob/checkpoint/399",
                            
                            "lr": 0.0001,
 
@@ -374,7 +374,7 @@ def main():
     model2.summary()
 
     if FLAGS.pre_checkpoint:
-        ckpt = tf.train.Checkpoint(model=model, optim=optim)
+        ckpt = tf.train.Checkpoint(model=model, model2=model2, optim=optim, optim2=optim2)
         ckpt_manager = tf.train.CheckpointManager(ckpt, FLAGS.pre_checkpoint_path, 5)
 
         if ckpt_manager.latest_checkpoint:
