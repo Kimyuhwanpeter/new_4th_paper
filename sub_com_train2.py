@@ -24,7 +24,7 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            
                            "pre_checkpoint": False,
                            
-                           "pre_checkpoint_path": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint/399",
+                           "pre_checkpoint_path": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint/19",
                            
                            "lr": 0.0001,
 
@@ -165,7 +165,7 @@ def modified_dice_loss_nonobject(y_true, y_pred):
 def two_region_dice_loss(y_true, y_pred):   # Surface losss --> from thesis
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.math.sigmoid(y_pred)
-    numerator = 2*tf.reduce_sum(y_true*y_pred) + tf.reduce_sum((1 - y_true)*(1 - y_pred))
+    numerator = 2*(tf.reduce_sum(y_true*y_pred) + tf.reduce_sum((1 - y_true)*(1 - y_pred)))
     denominator = tf.reduce_sum(y_true + y_pred) + tf.reduce_sum(2 - y_true - y_pred)
 
     return 1 - tf.math.divide(numerator, denominator)
