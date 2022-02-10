@@ -281,7 +281,7 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         # yes_obj_labels = tf.cast(tf.gather(label_objectiness, obj_indices), tf.float32)
         # obj_loss = tf.reduce_mean(true_dice_loss(yes_obj_labels, yes_logit_objectiness) + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness))
 
-        total_loss = two_region_dice_loss(label_objectiness, logit_objectiness)
+        total_loss = pGD_loss(label_objectiness, logit_objectiness)
 
     grads = tape.gradient(total_loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
