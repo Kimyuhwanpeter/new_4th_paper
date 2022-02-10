@@ -162,9 +162,24 @@ def modified_dice_loss_nonobject(y_true, y_pred):
 
     return loss
 
-def two_region_dice_loss(y_true, y_pred):   # Surface losss --> from thesis
+def two_region_dice_loss(y_true, y_pred):
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.math.sigmoid(y_pred)
+    numerator = 2*(tf.reduce_sum(y_true*y_pred) + tf.reduce_sum((1 - y_true)*(1 - y_pred)))
+    denominator = tf.reduce_sum(y_true + y_pred) + tf.reduce_sum(2 - y_true - y_pred)
+
+    return 1 - tf.math.divide(numerator, denominator)
+
+def two_region_dice_loss(y_true, y_pred):
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.math.sigmoid(y_pred)
+    numerator = 2*(tf.reduce_sum(y_true*y_pred) + tf.reduce_sum((1 - y_true)*(1 - y_pred)))
+    denominator = tf.reduce_sum(y_true + y_pred) + tf.reduce_sum(2 - y_true - y_pred)
+
+    return 1 - tf.math.divide(numerator, denominator)
+
+def two_region_dice_loss_w_onehot(y_true, y_pred):
+    y_true = tf.cast(y_true, tf.float32)
     numerator = 2*(tf.reduce_sum(y_true*y_pred) + tf.reduce_sum((1 - y_true)*(1 - y_pred)))
     denominator = tf.reduce_sum(y_true + y_pred) + tf.reduce_sum(2 - y_true - y_pred)
 
@@ -249,7 +264,7 @@ def binary_focal_loss(gamma=2., alpha=.25):
 
     return binary_focal_loss_fixed
 
-def cal_loss(model, model2, images, labels, objectiness, object_buf, crop_buf, weed_buf):
+def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf, object_buf, crop_buf, weed_buf):
 
     with tf.GradientTape() as tape: # channel ==> 1
 
@@ -320,8 +335,9 @@ def cal_loss(model, model2, images, labels, objectiness, object_buf, crop_buf, w
         only_crop_labels = np.zeros([FLAGS.batch_size*FLAGS.img_size*FLAGS.img_size,], np.uint8)
         only_crop_labels[only_crop_indices] = 1
         only_crop_labels = tf.cast(only_crop_labels, tf.float32)
-        # loss4 += binary_focal_loss(alpha=crop_buf[1])(only_crop_labels, tf.nn.sigmoid(logits[:, 0]))
         loss4 = two_region_dice_loss(only_crop_labels, logits[:, 0])
+        # if class_imbal_labels_buf[0] > class_imbal_labels_buf[1]:
+        #     loss4 += binary_focal_loss(alpha=crop_buf[0])(only_crop_labels, tf.nn.sigmoid(logits[:, 0]))
         
         # Dice for weed
         # weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
@@ -342,16 +358,23 @@ def cal_loss(model, model2, images, labels, objectiness, object_buf, crop_buf, w
         only_weed_labels = np.zeros([FLAGS.batch_size*FLAGS.img_size*FLAGS.img_size,], np.uint8)
         only_weed_labels[only_weed_indices] = 1
         only_weed_labels = tf.cast(only_weed_labels, tf.float32)
-        # loss5 += binary_focal_loss(alpha=weed_buf[1])(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
         loss5 = two_region_dice_loss(only_weed_labels, logits[:, 1])
-
+        # if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:
+        #     loss5 += binary_focal_loss(alpha=weed_buf[1])(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
+        
         # Crop and weed 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
         non_background_labels = tf.gather(batch_labels, non_background_indices)
         non_background_labels = tf.cast(non_background_labels, tf.int32)
         non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
         crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
-        loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
+        # loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
+        crop_weed_logits = tf.nn.softmax(crop_weed_logits, -1)
+        crop_logits = crop_weed_logits[:, 0]
+        crop_labels = non_background_labels[:, 0]
+        weed_logits = crop_weed_logits[:, 1]
+        weed_labels = non_background_labels[:, 1]
+        loss1 = two_region_dice_loss_w_onehot(crop_labels, crop_logits) + two_region_dice_loss_w_onehot(weed_labels, weed_logits)
         
         total_loss = loss1 + loss2 + loss5 + loss4
 
@@ -468,7 +491,7 @@ def main():
 
                 objectiness = np.where(batch_labels == 2, 0, 1)  # 피사체가 있는곳은 1 없는곳은 0으로 만들어준것
 
-                loss = cal_loss(model, model2, batch_images, batch_labels, objectiness, object_buf, crop_buf, weed_buf)
+                loss = cal_loss(model, model2, batch_images, batch_labels, objectiness, class_imbal_labels_buf, object_buf, crop_buf, weed_buf)
                 if count % 10 == 0:
                     print("Epoch: {} [{}/{}] loss = {}".format(epoch, step+1, tr_idx, loss))
 
