@@ -1,5 +1,6 @@
 # -*- coding:utf-8 -*-
 from base_UNET import *
+from modified_deeplab_V3 import *
 from PFB_measurement_related import Measurement
 from random import shuffle, random
 from tensorflow.keras import backend as K
@@ -21,7 +22,7 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            
                            "image_path": "/yuhwan/yuhwan/Dataset/Segmentation/Crop_weed/datasets_IJRR2017/raw_aug_rgb_img/",
                            
-                           "pre_checkpoint": True,
+                           "pre_checkpoint": False,
                            
                            "pre_checkpoint_path": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/BoniRob/checkpoint/399",
                            
@@ -161,6 +162,27 @@ def modified_dice_loss_nonobject(y_true, y_pred):
 
     return loss
 
+def two_region_dice_loss(y_true, y_pred):   # Surface losss --> from thesis
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.math.sigmoid(y_pred)
+    numerator = 2*(tf.reduce_sum(y_true * y_pred) + tf.reduce_sum((1 - y_true)*(1 - y_pred)))
+    denominator = tf.reduce_sum(y_true + y_pred) + tf.reduce_sum(2 - y_true - y_pred)
+
+    return 1 - tf.math.divide(numerator, denominator)
+
+def pGD_loss(y_true, y_pred, k=2.5):   # https://www.sciencedirect.com/science/article/pii/S1361841521000815
+    
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.math.sigmoid(y_pred)
+    numerator = 2*(tf.reduce_sum(y_true * y_pred) + tf.reduce_sum((1 - y_true)*(1 - y_pred)))
+    denominator = tf.reduce_sum(y_true + y_pred) + tf.reduce_sum(2 - y_true - y_pred)
+    
+    GD = tf.math.divide(numerator, denominator)
+    pGD = GD / (1 + k * two_region_dice_loss(y_true, y_pred))
+    
+    return 1 - pGD
+
+
 def categorical_focal_loss(alpha, gamma=2.):
     """
     Softmax version of focal loss.
@@ -240,8 +262,8 @@ def binary_focal_loss(gamma=2., alpha=.25):
 
     return binary_focal_loss_fixed
 
-def cal_loss(model, model2, images, labels, objectiness, object_buf, crop_buf, weed_buf):
-
+def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf, object_buf, crop_buf, weed_buf):
+    
     with tf.GradientTape() as tape: # channel ==> 1
 
         batch_labels = tf.reshape(labels, [-1,])
@@ -249,98 +271,110 @@ def cal_loss(model, model2, images, labels, objectiness, object_buf, crop_buf, w
         label_objectiness = tf.cast(tf.reshape(objectiness, [-1,]), tf.float32)
         logit_objectiness = tf.reshape(raw_logits, [-1,], tf.float32)
 
-        no_obj_indices = tf.squeeze(tf.where(tf.equal(tf.reshape(objectiness, [-1,]), 0)),1)
-        no_logit_objectiness = tf.gather(logit_objectiness, no_obj_indices)
-        no_obj_labels = tf.cast(tf.gather(label_objectiness, no_obj_indices), tf.float32)
-        no_obj_loss = tf.reduce_mean(false_dice_loss(no_obj_labels, no_logit_objectiness) + modified_dice_loss_nonobject(no_obj_labels, no_logit_objectiness))
+        # no_obj_indices = tf.squeeze(tf.where(tf.equal(tf.reshape(objectiness, [-1,]), 0)),1)
+        # no_logit_objectiness = tf.gather(logit_objectiness, no_obj_indices)
+        # no_obj_labels = tf.cast(tf.gather(label_objectiness, no_obj_indices), tf.float32)
+        # no_obj_loss = tf.reduce_mean(false_dice_loss(no_obj_labels, no_logit_objectiness) + modified_dice_loss_nonobject(no_obj_labels, no_logit_objectiness))
 
-        obj_indices = tf.squeeze(tf.where(tf.not_equal(tf.reshape(objectiness, [-1,]), 0)),1)
-        yes_logit_objectiness = tf.gather(logit_objectiness, obj_indices)
-        yes_obj_labels = tf.cast(tf.gather(label_objectiness, obj_indices), tf.float32)
-        obj_loss = tf.reduce_mean(true_dice_loss(yes_obj_labels, yes_logit_objectiness) + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness))
+        # obj_indices = tf.squeeze(tf.where(tf.not_equal(tf.reshape(objectiness, [-1,]), 0)),1)
+        # yes_logit_objectiness = tf.gather(logit_objectiness, obj_indices)
+        # yes_obj_labels = tf.cast(tf.gather(label_objectiness, obj_indices), tf.float32)
+        # obj_loss = tf.reduce_mean(true_dice_loss(yes_obj_labels, yes_logit_objectiness) + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness))
 
-        total_loss = obj_loss + no_obj_loss
+        total_loss = two_region_dice_loss(label_objectiness, logit_objectiness)
 
     grads = tape.gradient(total_loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
 
     with tf.GradientTape() as tape2: # channel ==> 3
-
+        # attention to crop and weed plain using raw_logits
         batch_labels = tf.reshape(labels, [-1,])
-        # raw_logits = run_model(model, images, False)
+        # raw_logits = run_model(model, images, False)      # ?????????
         raw_logits = tf.nn.sigmoid(raw_logits)
         logits = run_model(model2, images * raw_logits, True)
         logits = tf.reshape(logits, [-1, FLAGS.total_classes])
+        
+        # crop_raw_indices = np.where(batch_labels.numpy() != 0)
+        # weed_raw_indices = np.where(batch_labels.numpy() != 1)
+        # crop_raw_logits = tf.reshape(raw_logits, [-1,], tf.float32).numpy()
+        # crop_raw_logits[crop_raw_indices] = 0.2
+        # weed_raw_logits = tf.reshape(raw_logits, [-1,], tf.float32).numpy()
+        # weed_raw_logits[weed_raw_indices] = 0.2
+        
 
         # Dice for background
-        background_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 2)), -1)
-        background_labels = tf.gather(batch_labels, background_indices)
-        background_labels = tf.zeros_like(background_labels, dtype=tf.float32)
-        background_logits = tf.gather(logits[:, 2], background_indices)
-        loss2 = tf.reduce_mean(false_dice_loss(background_labels, background_logits) \
-                               + modified_dice_loss_nonobject(background_labels, background_logits))
+        # background_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 2)), -1)
+        # background_labels = tf.gather(batch_labels, background_indices)
+        # background_labels = tf.zeros_like(background_labels, dtype=tf.float32)
+        # background_logits = tf.gather(logits[:, 2], background_indices)
+        # loss2 = tf.reduce_mean(false_dice_loss(background_labels, background_logits) \
+        #                        + modified_dice_loss_nonobject(background_labels, background_logits))
 
-        non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
-        non_background_labels = tf.gather(batch_labels, non_background_indices)
-        non_background_labels = tf.ones_like(non_background_labels, dtype=tf.float32)
-        non_background_logits = tf.gather(logits[:, 2], non_background_indices)
-        loss2 += tf.reduce_mean(true_dice_loss(non_background_labels, non_background_logits) \
-                                + modified_dice_loss_object(non_background_labels, non_background_logits))
-
+        # non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
+        # non_background_labels = tf.gather(batch_labels, non_background_indices)
+        # non_background_labels = tf.ones_like(non_background_labels, dtype=tf.float32)
+        # non_background_logits = tf.gather(logits[:, 2], non_background_indices)
+        # loss2 += tf.reduce_mean(true_dice_loss(non_background_labels, non_background_logits) \
+        #                         + modified_dice_loss_object(non_background_labels, non_background_logits))
 
         # 여기에다 focal binary for object 를 추가해주자 (아래와 동일하게)
         objectiness = np.where(batch_labels == 2, 0, 1)  # 피사체가 있는곳은 1 없는곳은 0으로 만들어준것
-        loss2 += binary_focal_loss(alpha=object_buf[1])(objectiness, tf.nn.sigmoid(logits[:, 2]))
-
+        # loss2 += binary_focal_loss(alpha=object_buf[1])(objectiness, tf.nn.sigmoid(logits[:, 2]))
+        loss2 = pGD_loss(objectiness, logits[:, 2]) # * tf.reshape(raw_logits, [-1, ])
 
         # Dice for Crop
-        crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1)
-        crop_labels = tf.gather(batch_labels, crop_indices)
-        crop_labels = tf.ones_like(crop_labels, dtype=tf.float32)
-        crop_logits = tf.gather(logits[:, 0], crop_indices)
-        loss4 = tf.reduce_mean(true_dice_loss(crop_labels, crop_logits) \
-            + modified_dice_loss_object(crop_labels, crop_logits))
+        # crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1)
+        # crop_labels = tf.gather(batch_labels, crop_indices)
+        # crop_labels = tf.ones_like(crop_labels, dtype=tf.float32)
+        # crop_logits = tf.gather(logits[:, 0], crop_indices)
+        # loss4 = tf.reduce_mean(true_dice_loss(crop_labels, crop_logits) \
+        #     + modified_dice_loss_object(crop_labels, crop_logits))
 
-        non_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
-        non_crop_labels = tf.gather(batch_labels, non_crop_indices)
-        non_crop_labels = tf.zeros_like(non_crop_labels, dtype=tf.float32)
-        non_crop_logits = tf.gather(logits[:, 0], non_crop_indices)
-        loss4 += tf.reduce_mean(false_dice_loss(non_crop_labels, non_crop_logits) \
-                                + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits))
+        # non_crop_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 0)), -1)
+        # non_crop_labels = tf.gather(batch_labels, non_crop_indices)
+        # non_crop_labels = tf.zeros_like(non_crop_labels, dtype=tf.float32)
+        # non_crop_logits = tf.gather(logits[:, 0], non_crop_indices)
+        # loss4 += tf.reduce_mean(false_dice_loss(non_crop_labels, non_crop_logits) \
+        #                         + modified_dice_loss_nonobject(non_crop_labels, non_crop_logits))
         
         only_crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1).numpy()
         only_crop_labels = np.zeros([FLAGS.batch_size*FLAGS.img_size*FLAGS.img_size,], np.uint8)
         only_crop_labels[only_crop_indices] = 1
         only_crop_labels = tf.cast(only_crop_labels, tf.float32)
-        loss4 += binary_focal_loss(alpha=crop_buf[1])(only_crop_labels, tf.nn.sigmoid(logits[:, 0]))
+        loss4 = pGD_loss(only_crop_labels, logits[:, 0])
+        if class_imbal_labels_buf[0] > class_imbal_labels_buf[1]:
+            loss4 += binary_focal_loss(alpha=0.75)(only_crop_labels, tf.nn.sigmoid(logits[:, 0]))
         
         # Dice for weed
-        weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
-        weed_labels = tf.gather(batch_labels, weed_indices)
-        weed_labels = tf.ones_like(weed_labels, dtype=tf.float32)
-        weed_logits = tf.gather(logits[:, 1], weed_indices)
-        loss5 = tf.reduce_mean(true_dice_loss(weed_labels, weed_logits) \
-                               + modified_dice_loss_object(weed_labels, weed_logits))
+        # weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
+        # weed_labels = tf.gather(batch_labels, weed_indices)
+        # weed_labels = tf.ones_like(weed_labels, dtype=tf.float32)
+        # weed_logits = tf.gather(logits[:, 1], weed_indices)
+        # loss5 = tf.reduce_mean(true_dice_loss(weed_labels, weed_logits) \
+        #                        + modified_dice_loss_object(weed_labels, weed_logits))
         
-        non_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
-        non_weed_labels = tf.gather(batch_labels, non_weed_indices)
-        non_weed_labels = tf.zeros_like(non_weed_labels, dtype=tf.float32)
-        non_weed_logits = tf.gather(logits[:, 1], non_weed_indices)
-        loss5 += tf.reduce_mean(false_dice_loss(non_weed_labels, non_weed_logits) \
-                                + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits))
+        # non_weed_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 1)), -1)
+        # non_weed_labels = tf.gather(batch_labels, non_weed_indices)
+        # non_weed_labels = tf.zeros_like(non_weed_labels, dtype=tf.float32)
+        # non_weed_logits = tf.gather(logits[:, 1], non_weed_indices)
+        # loss5 += tf.reduce_mean(false_dice_loss(non_weed_labels, non_weed_logits) \
+        #                         + modified_dice_loss_nonobject(non_weed_labels, non_weed_logits))
         
         only_weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
         only_weed_labels = np.zeros([FLAGS.batch_size*FLAGS.img_size*FLAGS.img_size,], np.uint8)
         only_weed_labels[only_weed_indices] = 1
         only_weed_labels = tf.cast(only_weed_labels, tf.float32)
-        loss5 += binary_focal_loss(alpha=weed_buf[1])(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
+        loss5 = pGD_loss(only_weed_labels, logits[:, 1])
+        if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:
+            loss5 += binary_focal_loss(alpha=0.75)(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
 
+        # Crop and weed 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
         non_background_labels = tf.gather(batch_labels, non_background_indices)
         non_background_labels = tf.cast(non_background_labels, tf.int32)
         non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
         crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
-        loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
+        loss1 = categorical_focal_loss(alpha=[[0.25, 0.75]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
         
         total_loss = loss1 + loss2 + loss5 + loss4
 
@@ -352,23 +386,19 @@ def cal_loss(model, model2, images, labels, objectiness, object_buf, crop_buf, w
 # yilog(h(xi;θ))+(1−yi)log(1−h(xi;θ))
 def main():
     tf.keras.backend.clear_session()
-    # 마지막 plain은 objecttines에 대한 True or False값 즉 (mask값이고), 라벨은 annotation 이미지임 (crop/weed)
-    # 학습이미지에 대해 online augmentation을 진행--> 전처리로서 필터링을 하던지 해서 , 피사체에 대한 high frequency 성분을
-    # 가지고오자
-    #model = PFB_model(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), OUTPUT_CHANNELS=FLAGS.total_classes-1)\
+
     model = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=1)
     model2 = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=FLAGS.total_classes,
-                  decoder_block_type="transpose")
-    #out = model.get_layer("activation_decoder_2_upsample").output
-    #out = tf.keras.layers.Conv2D(FLAGS.total_classes-1, (1,1), name="output_layer")(out)
-    #model = tf.keras.Model(inputs=model.input, outputs=out)
-    
-    #for layer in model.layers:
-    #    if isinstance(layer, tf.keras.layers.BatchNormalization):
-    #        layer.momentum = 0.9997
-    #        layer.epsilon = 1e-5
-        #elif isinstance(layer, tf.keras.layers.Conv2D):
-        #    layer.kernel_regularizer = tf.keras.regularizers.l2(0.0005)
+                    decoder_block_type="transpose")
+    # model = model2 = DeepLabV3Plus(FLAGS.img_size, FLAGS.img_size, 34)
+    # out = model.get_layer("activation_decoder_2_upsample").output
+    # out = tf.keras.layers.Conv2D(1, (1, 1))(out)
+    # model = tf.keras.Model(inputs=model.input, outputs=out)
+
+    # out = model2.get_layer("activation_decoder_2_upsample").output
+    # out = tf.keras.layers.Conv2D(FLAGS.total_classes, (1, 1))(out)
+    # model2 = tf.keras.Model(inputs=model2.input, outputs=out)
+
 
     model.summary()
     model2.summary()
@@ -467,7 +497,7 @@ def main():
 
                 objectiness = np.where(batch_labels == 2, 0, 1)  # 피사체가 있는곳은 1 없는곳은 0으로 만들어준것
 
-                loss = cal_loss(model, model2, batch_images, batch_labels, objectiness, object_buf, crop_buf, weed_buf)
+                loss = cal_loss(model, model2, batch_images, batch_labels, objectiness, class_imbal_labels_buf, object_buf, crop_buf, weed_buf)
                 if count % 10 == 0:
                     print("Epoch: {} [{}/{}] loss = {}".format(epoch, step+1, tr_idx, loss))
 
