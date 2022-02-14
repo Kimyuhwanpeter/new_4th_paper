@@ -252,11 +252,11 @@ class Measurement:
         cm = np.diag(cm)
     
         U = label_count + predict_count - cm
-        U = np.delete(U, -1)
-        cm_ = np.delete(cm, -1)
+        # U = np.delete(U, -1)
+        # cm_ = np.delete(cm, -1)
 
         out = np.zeros((2))
-        miou = np.divide(cm_, U + 1e-7)
+        miou = np.divide(cm, U + 1e-7)
         crop_iou = miou[0]
         weed_iou = miou[1]
         miou = np.nanmean(miou)
