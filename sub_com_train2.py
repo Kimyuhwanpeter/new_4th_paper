@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
 from charset_normalizer import from_bytes
 from base_UNET import *
-from modified_deeplab_V3 import *
+# from modified_deeplab_V3 import *
 from PFB_measurement import Measurement
 from random import shuffle, random
 
@@ -38,11 +38,11 @@ FLAGS = easydict.EasyDict({"img_size": 512,
 
                            "batch_size": 4,
 
-                           "sample_images": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/sample_images",
+                           "sample_images": "/yuhwan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/sample_images",
 
-                           "save_checkpoint": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint",
+                           "save_checkpoint": "/yuhwan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint",
 
-                           "save_print": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_out.txt",
+                           "save_print": "/yuhwan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_out.txt",
 
                            "train_loss_graphs": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_loss.txt",
 
@@ -230,6 +230,7 @@ def categorical_focal_loss(alpha, gamma=2.):
 
         # Compute mean loss in mini_batch
         return tf.keras.backend.mean(tf.keras.backend.sum(loss, axis=-1))
+        # return (tf.keras.backend.sum(loss, axis=-1))
 
     return categorical_focal_loss_fixed
 
@@ -368,19 +369,17 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         non_background_labels = tf.cast(non_background_labels, tf.int32)
         non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
         crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
-        # loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
         crop_weed_logits = tf.nn.softmax(crop_weed_logits, -1)
-        crop_logits = crop_weed_logits[:, 0]
-        crop_labels = non_background_labels[:, 0]
-        weed_logits = crop_weed_logits[:, 1]
-        weed_labels = non_background_labels[:, 1]
-        loss1 = two_region_dice_loss_w_onehot(crop_labels, crop_logits) + two_region_dice_loss_w_onehot(weed_labels, weed_logits)
+        # loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
+        loss1 = two_region_dice_loss_w_onehot(non_background_labels[:, 0], crop_weed_logits[:, 0]) + two_region_dice_loss_w_onehot(non_background_labels[:, 1], crop_weed_logits[:, 1])
         
         total_loss = loss1 + loss2 + loss5 + loss4
 
     grads = tape2.gradient(total_loss, model2.trainable_variables)
     optim2.apply_gradients(zip(grads, model2.trainable_variables))
+    
     return total_loss
+
 
 
 # yilog(h(xi;θ))+(1−yi)log(1−h(xi;θ))
@@ -390,7 +389,7 @@ def main():
     # 학습이미지에 대해 online augmentation을 진행--> 전처리로서 필터링을 하던지 해서 , 피사체에 대한 high frequency 성분을
     # 가지고오자
     #model = PFB_model(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), OUTPUT_CHANNELS=FLAGS.total_classes-1)\
-    model = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=1)
+    model = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=1, decoder_block_type="transpose")
     model2 = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=FLAGS.total_classes,
                     decoder_block_type="transpose") #                   decoder_block_type="transpose"
 
