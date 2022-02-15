@@ -4,6 +4,7 @@ from base_UNET import *
 # from modified_deeplab_V3 import *
 from PFB_measurement import Measurement
 from random import shuffle, random
+from tensorflow.keras import backend as K
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -284,7 +285,7 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         # yes_obj_labels = tf.cast(tf.gather(label_objectiness, obj_indices), tf.float32)
         # obj_loss = tf.reduce_mean(true_dice_loss(yes_obj_labels, yes_logit_objectiness) + modified_dice_loss_object(yes_obj_labels, yes_logit_objectiness))
 
-        total_loss = two_region_dice_loss(label_objectiness, logit_objectiness)
+        total_loss = two_region_dice_loss(label_objectiness, logit_objectiness) + binary_focal_loss(alpha=object_buf[1])(label_objectiness, tf.nn.sigmoid(logit_objectiness))
 
     grads = tape.gradient(total_loss, model.trainable_variables)
     optim.apply_gradients(zip(grads, model.trainable_variables))
@@ -314,8 +315,8 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
 
         # 여기에다 focal binary for object 를 추가해주자 (아래와 동일하게)
         objectiness = np.where(batch_labels == 2, 0, 1)  # 피사체가 있는곳은 1 없는곳은 0으로 만들어준것
-        # loss2 += binary_focal_loss(alpha=object_buf[1])(objectiness, tf.nn.sigmoid(logits[:, 2]))
-        loss2 = two_region_dice_loss(objectiness, logits[:, 2]) # * tf.reshape(raw_logits, [-1, ])
+        loss2 = binary_focal_loss(alpha=object_buf[1])(objectiness, tf.nn.sigmoid(logits[:, 2]))
+        loss2 += two_region_dice_loss(objectiness, logits[:, 2]) # * tf.reshape(raw_logits, [-1, ])
 
         # Dice for Crop
         # crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1)
@@ -337,8 +338,8 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         only_crop_labels[only_crop_indices] = 1
         only_crop_labels = tf.cast(only_crop_labels, tf.float32)
         loss4 = two_region_dice_loss(only_crop_labels, logits[:, 0])
-        # if class_imbal_labels_buf[0] > class_imbal_labels_buf[1]:
-        #     loss4 += binary_focal_loss(alpha=crop_buf[0])(only_crop_labels, tf.nn.sigmoid(logits[:, 0]))
+        if class_imbal_labels_buf[0] > class_imbal_labels_buf[1]:
+            loss4 += binary_focal_loss(alpha=crop_buf[0])(only_crop_labels, tf.nn.sigmoid(logits[:, 0]))
         
         # Dice for weed
         # weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
@@ -360,8 +361,8 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         only_weed_labels[only_weed_indices] = 1
         only_weed_labels = tf.cast(only_weed_labels, tf.float32)
         loss5 = two_region_dice_loss(only_weed_labels, logits[:, 1])
-        # if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:
-        #     loss5 += binary_focal_loss(alpha=weed_buf[1])(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
+        if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:
+            loss5 += binary_focal_loss(alpha=weed_buf[1])(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
         
         # Crop and weed 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
@@ -370,7 +371,7 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
         crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
         crop_weed_logits = tf.nn.softmax(crop_weed_logits, -1)
-        # loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
+        loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
         loss1 = two_region_dice_loss_w_onehot(non_background_labels[:, 0], crop_weed_logits[:, 0]) + two_region_dice_loss_w_onehot(non_background_labels[:, 1], crop_weed_logits[:, 1])
         
         total_loss = loss1 + loss2 + loss5 + loss4
