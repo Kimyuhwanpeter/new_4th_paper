@@ -22,9 +22,9 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            
                            "image_path": "/yuhwan/yuhwan/Dataset/Segmentation/Crop_weed/datasets_IJRR2017/raw_aug_rgb_img/",
                            
-                           "pre_checkpoint": False,
+                           "pre_checkpoint": True,
                            
-                           "pre_checkpoint_path": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/BoniRob/checkpoint/399",
+                           "pre_checkpoint_path": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/BoniRob/checkpoint/395",
                            
                            "lr": 0.0001,
 
@@ -221,8 +221,8 @@ def categorical_focal_loss(alpha, gamma=2.):
         loss = alpha * tf.math.pow(1 - y_pred, gamma) * cross_entropy
 
         # Compute mean loss in mini_batch
-        # return tf.keras.backend.mean(tf.keras.backend.sum(loss, axis=-1))
-        return (tf.keras.backend.sum(loss, axis=-1))
+        return tf.keras.backend.mean(tf.keras.backend.sum(loss, axis=-1))
+        # return (tf.keras.backend.sum(loss, axis=-1))
 
     return categorical_focal_loss_fixed
 
@@ -329,8 +329,8 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         only_crop_labels[only_crop_indices] = 1
         only_crop_labels = tf.cast(only_crop_labels, tf.float32)
         loss4 = two_region_dice_loss(only_crop_labels, logits[:, 0])
-        if class_imbal_labels_buf[0] > class_imbal_labels_buf[1]:
-            loss4 += binary_focal_loss(alpha=crop_buf[0])(only_crop_labels, tf.nn.sigmoid(logits[:, 0]))
+        # if class_imbal_labels_buf[0] > class_imbal_labels_buf[1]:
+        #     loss4 += binary_focal_loss(alpha=crop_buf[0])(only_crop_labels, tf.nn.sigmoid(logits[:, 0]))
         
         # Dice for weed
         # weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
@@ -352,8 +352,8 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         only_weed_labels[only_weed_indices] = 1
         only_weed_labels = tf.cast(only_weed_labels, tf.float32)
         loss5 = two_region_dice_loss(only_weed_labels, logits[:, 1])
-        if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:
-            loss5 += binary_focal_loss(alpha=weed_buf[1])(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
+        # if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:
+        #     loss5 += binary_focal_loss(alpha=weed_buf[1])(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
         
         # Crop and weed 
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
@@ -362,14 +362,8 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
         crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
         loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
-        
-        crop_weed_logits = tf.nn.softmax(crop_weed_logits, -1)
-        crop_logits = crop_weed_logits[:, 0]
-        crop_labels = non_background_labels[:, 0]
-        weed_logits = crop_weed_logits[:, 1]
-        weed_labels = non_background_labels[:, 1]
-        loss1 += two_region_dice_loss_w_onehot(crop_labels, crop_logits) + two_region_dice_loss_w_onehot(weed_labels, weed_logits)
-        loss1 = tf.reduce_mean(loss1)
+        # crop_weed_logits = tf.nn.softmax(crop_weed_logits, -1)
+        # loss1 += two_region_dice_loss_w_onehot(non_background_labels[:, 0], crop_weed_logits[:, 0]) + two_region_dice_loss_w_onehot(non_background_labels[:, 1], crop_weed_logits[:, 1])
         
         total_loss = loss1 + loss2 + loss5 + loss4
 
@@ -384,7 +378,7 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
 def main():
     tf.keras.backend.clear_session()
 
-    model = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=1)
+    model = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=1, decoder_block_type="transpose")
     model2 = Unet(input_shape=(FLAGS.img_size, FLAGS.img_size, 3), classes=FLAGS.total_classes,
                     decoder_block_type="transpose")
     # model = model2 = DeepLabV3Plus(FLAGS.img_size, FLAGS.img_size, 34)
