@@ -10,5 +10,5 @@
 * Colab_train.py 에서는 batch 를 약간 무리해서 설정했음 --> loss의 alpha 값들은 0.2 or 0.8로 고정되도록 변경했음
 <br/>
 
-* Main com 성능은 일단 기준으로 잡자
+* Main com 성능은 main_com_train.py 기준으로 잡자
 * Sub com 학습은 해보고있음. Imbalance plain을 따로 설계해보는것도 괜찮을듯?
