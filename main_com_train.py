@@ -22,7 +22,7 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            
                            "image_path": "/yuhwan/yuhwan/Dataset/Segmentation/Crop_weed/datasets_IJRR2017/raw_aug_rgb_img/",
                            
-                           "pre_checkpoint": True,
+                           "pre_checkpoint": False,
                            
                            "pre_checkpoint_path": "/yuhwan/yuhwan/checkpoint/Segmenation/V2/BoniRob/checkpoint/395",
                            
