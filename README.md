@@ -8,3 +8,6 @@
 * **시간은 걸리더라도, 지금 학습하고있는건 조금씩 성능 개선도가 보임 (현재 학습하고있음, MIOU: 74 % 까지 증가)**
 * sub_com_train2 이 현재까지 했던 결과물중에 가장 개선됨 (weed iou만 개선하면 됨) --> Generalied dice loss 사용
 * Colab_train.py 에서는 batch 를 약간 무리해서 설정했음 --> loss의 alpha 값들은 0.2 or 0.8로 고정되도록 변경했음
+<br/>
+
+* Sub Com
