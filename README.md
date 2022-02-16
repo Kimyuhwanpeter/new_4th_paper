@@ -10,4 +10,4 @@
 * Colab_train.py 에서는 batch 를 약간 무리해서 설정했음 --> loss의 alpha 값들은 0.2 or 0.8로 고정되도록 변경했음
 <br/>
 
-* Sub Com
+* Main com 성능은 일단 기준으로 잡자
