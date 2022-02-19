@@ -356,17 +356,19 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         # if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:
         #     loss5 += binary_focal_loss(alpha=weed_buf[1])(only_weed_labels, tf.nn.sigmoid(logits[:, 1]))
         
-        # Crop and weed 
+        # Crop and weed
         non_background_indices = tf.squeeze(tf.where(tf.not_equal(batch_labels, 2)), -1)
         non_background_labels = tf.gather(batch_labels, non_background_indices)
         non_background_labels = tf.cast(non_background_labels, tf.int32)
         non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
         crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
         loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
-        loss1 += two_region_dice_loss(non_background_labels[:, 0], crop_weed_logits[:, 0]) + two_region_dice_loss(non_background_labels[:, 1], crop_weed_logits[:, 1])
+        crop_weed_logits_temp = tf.nn.softmax(crop_weed_logits, -1)
+        loss1 += two_region_dice_loss_w_onehot(non_background_labels[:, 0], crop_weed_logits_temp[:, 0]) + two_region_dice_loss_w_onehot(non_background_labels[:, 1], crop_weed_logits_temp[:, 1])
+        loss1 += binary_focal_loss(alpha=crop_buf[0])(non_background_labels[:, 0], tf.nn.sigmoid(crop_weed_logits[:, 0]))
+        loss1 += binary_focal_loss(alpha=weed_buf[1])(non_background_labels[:, 1], tf.nn.sigmoid(crop_weed_logits[:, 1]))
         # crop_weed_logits = tf.nn.softmax(crop_weed_logits, -1)
         # loss1 += two_region_dice_loss_w_onehot(non_background_labels[:, 0], crop_weed_logits[:, 0]) + two_region_dice_loss_w_onehot(non_background_labels[:, 1], crop_weed_logits[:, 1])
-        
         total_loss = loss1 + loss2 + loss5 + loss4
 
     grads = tape2.gradient(total_loss, model2.trainable_variables)
