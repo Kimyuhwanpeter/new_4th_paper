@@ -288,7 +288,10 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         # raw_logits = run_model(model, images, False)      # ?????????
         raw_logits = tf.nn.sigmoid(raw_logits)
         logits = run_model(model2, images * raw_logits, True)
+        object_output = tf.nn.sigmoid(logits[:, :, :, 2])
+        crop_weed_output = tf.nn.softmax(logits[:, :, :, 0:2], -1)
         logits = tf.reshape(logits, [-1, FLAGS.total_classes])
+
 
         # Dice for background
         # background_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 2)), -1)
@@ -375,13 +378,21 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
             crop_labels = tf.one_hot(crop_labels, FLAGS.total_classes-1)
             crop_logits = tf.gather(logits[:, 0:2], crop_indices)
             loss1 += tf.keras.losses.CategoricalCrossentropy(from_logits=True)(crop_labels, crop_logits)
+
+        object_output = tf.where(object_output >= 0.5, 1, 0).numpy()
+        false_object_indices = np.where(object_output == 0)
+        crop_weed_output = tf.cast(tf.argmax(crop_weed_output, -1), tf.int32).numpy()
+        crop_weed_output[false_object_indices] = 2
+
+        loss3 = tf.reduce_mean(tf.abs(crop_weed_output - labels[:, :, :, 0]))
+
+
         # crop_weed_logits = tf.nn.softmax(crop_weed_logits, -1)
         # loss1 += two_region_dice_loss_w_onehot(non_background_labels[:, 0], crop_weed_logits[:, 0]) + two_region_dice_loss_w_onehot(non_background_labels[:, 1], crop_weed_logits[:, 1])
 
-        # 이 상태가 아직까진 안전하게 학습이 됨
-        # only weed 에 관한것만, only crop에 관한것만 loss1에 각각 추가하자 (내가 저번에 했던것과 동일하게)
+        # 교수님이 말씀하신것처럼 해보기
 
-        total_loss = loss1 + loss2 + loss5 + loss4
+        total_loss = loss1 + loss2 + loss5 + loss4 + loss3
 
     grads = tape2.gradient(total_loss, model2.trainable_variables)
     optim2.apply_gradients(zip(grads, model2.trainable_variables))
