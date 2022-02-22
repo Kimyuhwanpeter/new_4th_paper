@@ -258,7 +258,7 @@ def binary_focal_loss(gamma=2., alpha=.25):
     return binary_focal_loss_fixed
 
 def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf, object_buf, crop_buf, weed_buf):
-    
+
     with tf.GradientTape() as tape: # channel ==> 1
 
         batch_labels = tf.reshape(labels, [-1,])
@@ -287,7 +287,10 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         # raw_logits = run_model(model, images, False)      # ?????????
         raw_logits = tf.nn.sigmoid(raw_logits)
         logits = run_model(model2, images * raw_logits, True)
+        object_output = tf.nn.sigmoid(logits[:, :, :, 2])
+        crop_weed_output = tf.nn.softmax(logits[:, :, :, 0:2], -1)
         logits = tf.reshape(logits, [-1, FLAGS.total_classes])
+
 
         # Dice for background
         # background_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 2)), -1)
@@ -361,14 +364,31 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         non_background_labels = tf.cast(non_background_labels, tf.int32)
         non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
         crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
-        # loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
         loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
-        loss1 += binary_focal_loss(alpha=crop_buf[0])(non_background_labels[:, 0], tf.nn.sigmoid(crop_weed_logits[:, 0]))
-        loss1 += binary_focal_loss(alpha=weed_buf[1])(non_background_labels[:, 1], tf.nn.sigmoid(crop_weed_logits[:, 1]))
-        # crop_weed_logits = tf.nn.softmax(crop_weed_logits, -1)
-        # loss1 += two_region_dice_loss_w_onehot(non_background_labels[:, 0], crop_weed_logits[:, 0]) + two_region_dice_loss_w_onehot(non_background_labels[:, 1], crop_weed_logits[:, 1])
-        
-        total_loss = loss1 + loss2 + loss5 + loss4
+
+        if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:   # weed에 관한것 --> weed 만 mse 해주는것!기;억해!!!!
+            object_output = tf.where(object_output >= 0.5, 1, 0).numpy()
+            false_object_indices = np.where(object_output == 0)
+            crop_weed_output = tf.cast(tf.argmax(crop_weed_output, -1), tf.int32).numpy()
+            crop_weed_output[false_object_indices] = 2
+            weed_indices = np.where(crop_weed_output == 1)
+            weed_lab = tf.gather(labels, weed_indices)
+            weed_logits = tf.gather(crop_weed_output, weed_indices)
+
+            loss3 = tf.reduce_mean(tf.abs(weed_logits - weed_lab))
+
+        else:                       # crop에 관한것
+            object_output = tf.where(object_output >= 0.5, 1, 0).numpy()
+            false_object_indices = np.where(object_output == 0)
+            crop_weed_output = tf.cast(tf.argmax(crop_weed_output, -1), tf.int32).numpy()
+            crop_weed_output[false_object_indices] = 2
+            crop_indices = np.where(crop_weed_output == 0)
+            crop_lab = tf.gather(labels, crop_indices)
+            crop_logits = tf.gather(crop_weed_output, crop_indices)
+
+            loss3 = tf.reduce_mean(tf.abs(crop_logits - crop_lab))
+
+        total_loss = loss1 + loss2 + loss5 + loss4 + loss3
 
     grads = tape2.gradient(total_loss, model2.trainable_variables)
     optim2.apply_gradients(zip(grads, model2.trainable_variables))
