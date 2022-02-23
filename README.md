@@ -11,6 +11,6 @@
 <br/>
 
 * Main com 성능은 main_com_train.py 기준으로 잡자
-* Sub com 학습은 해보고있음. Imbalance plain을 따로 설계해보는것도 괜찮을듯?
+* sub_com_train.py --> around 0.856 
 * Currently, Temp_train.py is running on main computer
 * 2022년 2월 21일 월요일에 temp_train.py and sub_train.py 확인해볼것 (지금 본컴과 서브컴에서 학습하는중)
