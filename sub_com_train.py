@@ -23,9 +23,9 @@ FLAGS = easydict.EasyDict({"img_size": 512,
                            
                            "image_path": "/yuwhan/yuwhan/Dataset/Segmentation/BoniRob/raw_aug_rgb_img/",
                            
-                           "pre_checkpoint": False,
+                           "pre_checkpoint": True,
                            
-                           "pre_checkpoint_path": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint/19",
+                           "pre_checkpoint_path": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint/146",
                            
                            "lr": 0.0001,
 
@@ -39,11 +39,11 @@ FLAGS = easydict.EasyDict({"img_size": 512,
 
                            "batch_size": 4,
 
-                           "sample_images": "/yuhwan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/sample_images",
+                           "sample_images": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/sample_images",
 
-                           "save_checkpoint": "/yuhwan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint",
+                           "save_checkpoint": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/checkpoint",
 
-                           "save_print": "/yuhwan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_out.txt",
+                           "save_print": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_out.txt",
 
                            "train_loss_graphs": "/yuwhan/Edisk/yuwhan/Edisk/Segmentation/V2/BoniRob/train_loss.txt",
 
@@ -366,26 +366,25 @@ def cal_loss(model, model2, images, labels, objectiness, class_imbal_labels_buf,
         non_background_labels = tf.one_hot(non_background_labels, FLAGS.total_classes-1)
         crop_weed_logits = tf.gather(logits[:, 0:2], non_background_indices)
         loss1 = categorical_focal_loss(alpha=[[weed_buf[0], weed_buf[1]]])(non_background_labels, tf.nn.softmax(crop_weed_logits, -1))
-        if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:
-            weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
-            weed_labels = tf.gather(batch_labels, weed_indices)
-            weed_labels = tf.one_hot(weed_labels, FLAGS.total_classes-1)
-            weed_logits = tf.gather(logits[:, 0:2], weed_indices)
-            loss1 += tf.keras.losses.CategoricalCrossentropy(from_logits=True)(weed_labels, weed_logits)
-        else:
-            crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1)
-            crop_labels = tf.gather(batch_labels, crop_indices)
-            crop_labels = tf.one_hot(crop_labels, FLAGS.total_classes-1)
-            crop_logits = tf.gather(logits[:, 0:2], crop_indices)
-            loss1 += tf.keras.losses.CategoricalCrossentropy(from_logits=True)(crop_labels, crop_logits)
+        # if class_imbal_labels_buf[0] < class_imbal_labels_buf[1]:
+        #     weed_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 1)), -1)
+        #     weed_labels = tf.gather(batch_labels, weed_indices)
+        #     weed_labels = tf.one_hot(weed_labels, FLAGS.total_classes-1)
+        #     weed_logits = tf.gather(logits[:, 0:2], weed_indices)
+        #     loss1 += tf.keras.losses.CategoricalCrossentropy(from_logits=True)(weed_labels, weed_logits)
+        # else:
+        #     crop_indices = tf.squeeze(tf.where(tf.equal(batch_labels, 0)), -1)
+        #     crop_labels = tf.gather(batch_labels, crop_indices)
+        #     crop_labels = tf.one_hot(crop_labels, FLAGS.total_classes-1)
+        #     crop_logits = tf.gather(logits[:, 0:2], crop_indices)
+        #     loss1 += tf.keras.losses.CategoricalCrossentropy(from_logits=True)(crop_labels, crop_logits)
 
         object_output = tf.where(object_output >= 0.5, 1, 0).numpy()
         false_object_indices = np.where(object_output == 0)
         crop_weed_output = tf.cast(tf.argmax(crop_weed_output, -1), tf.int32).numpy()
         crop_weed_output[false_object_indices] = 2
 
-        loss3 = tf.reduce_mean(tf.abs(crop_weed_output - labels[:, :, :, 0]))
-
+        loss3 = tf.reduce_mean(tf.abs(tf.cast(crop_weed_output, tf.float32) - tf.cast(labels, tf.float32)))
 
         # crop_weed_logits = tf.nn.softmax(crop_weed_logits, -1)
         # loss1 += two_region_dice_loss_w_onehot(non_background_labels[:, 0], crop_weed_logits[:, 0]) + two_region_dice_loss_w_onehot(non_background_labels[:, 1], crop_weed_logits[:, 1])
