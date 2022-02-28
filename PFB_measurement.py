@@ -238,28 +238,42 @@ class Measurement:
         self.shape = shape
 
     def MIOU(self):
-
+        # 0-crop, 1-weed, 2-background
         self.predict = np.reshape(self.predict, self.shape)
         self.label = np.reshape(self.label, self.shape)
 
+        crop_back_predict = np.where(self.predict == 1, 2, self.predict)
+        crop_back_predict = np.where(crop_back_predict == 2, 1, crop_back_predict)
+        crop_back_label = np.where(self.label == 1, 2, self.label)
+        crop_back_label = np.where(crop_back_label == 2, 1, crop_back_label)
+        
+        weed_back_predict = np.where(self.predict == 0, 2, self.predict)
+        weed_back_predict = np.where(weed_back_predict == 1, 0, weed_back_predict)
+        weed_back_predict = np.where(weed_back_predict == 2, 1, weed_back_predict)
+        weed_back_label = np.where(self.label == 0, 2, self.label)
+        weed_back_label = np.where(weed_back_label == 1, 0, weed_back_label)
+        weed_back_label = np.where(weed_back_label == 2, 1, weed_back_label)
+
         predict_count = np.bincount(self.predict, minlength=self.total_classes)
         label_count = np.bincount(self.label, minlength=self.total_classes)
-         
-        temp = self.total_classes * np.array(self.label, dtype="int") + np.array(self.predict, dtype="int")  # Get category metrics
-    
-        temp_count = np.bincount(temp, minlength=self.total_classes * self.total_classes)
-        cm = np.reshape(temp_count, [self.total_classes, self.total_classes])
-        cm = np.diag(cm)
-    
-        U = label_count + predict_count - cm
-        # U = np.delete(U, -1)
-        # cm_ = np.delete(cm, -1)
+        
+        crop_back_predict_count = np.bincount(crop_back_predict, minlength=self.total_classes-1)
+        crop_back_label_count = np.bincount(crop_back_label, minlength=self.total_classes-1)
 
-        out = np.zeros((2))
-        miou = np.divide(cm, U + 1e-7)
-        crop_iou = miou[0]
-        weed_iou = miou[1]
-        miou = np.nanmean(miou)
+        weed_back_predict_count = np.bincount(weed_back_predict, minlength=self.total_classes-1)
+        weed_back_label_count = np.bincount(weed_back_label, minlength=self.total_classes-1)
+
+        crop_back_cm = tf.math.confusion_matrix(crop_back_label, 
+                                      crop_back_predict,
+                                      num_classes=self.total_classes-1).numpy()
+        crop_iou = crop_back_cm[0,0]/(crop_back_cm[0,0] + crop_back_cm[0,1] + crop_back_cm[1,0])
+
+        weed_back_cm = tf.math.confusion_matrix(weed_back_label, 
+                                      weed_back_predict,
+                                      num_classes=self.total_classes-1).numpy()
+        weed_iou = weed_back_cm[0,0]/(weed_back_cm[0,0] + weed_back_cm[0,1] + weed_back_cm[1,0])
+
+        total_cm = crop_back_cm + weed_back_cm
         
 
         if weed_iou == float('NaN'):
@@ -267,7 +281,7 @@ class Measurement:
         if crop_iou == float('NaN'):
             crop_iou = 0.
 
-        return miou, crop_iou, weed_iou
+        return total_cm, crop_back_cm, weed_back_cm
 
     def F1_score_and_recall(self):  # recall - sensitivity
 
