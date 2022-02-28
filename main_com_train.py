@@ -528,11 +528,11 @@ def main():
 
             tr_iter = iter(train_ge)
             miou = 0.
-            f1_score = 0.
-            tdr = 0.
-            sensitivity = 0.
+            f1_score_ = 0.
             crop_iou = 0.
             weed_iou = 0.
+            recall_ = 0.
+            precision_ = 0.
             for i in range(tr_idx):
                 batch_images, _, batch_labels = next(tr_iter)
                 for j in range(FLAGS.batch_size):
@@ -559,53 +559,42 @@ def main():
                                         label=batch_label, 
                                         shape=[FLAGS.img_size*FLAGS.img_size, ], 
                                         total_classes=FLAGS.total_classes).MIOU()
-                    f1_score_, recall_ = Measurement(predict=image,
-                                            label=batch_label,
-                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
-                                            total_classes=FLAGS.total_classes).F1_score_and_recall()
-                    tdr_ = Measurement(predict=image,
-                                            label=batch_label,
-                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
-                                            total_classes=FLAGS.total_classes).TDR()
 
-                    miou += miou_
-                    f1_score += f1_score_
-                    sensitivity += recall_
-                    tdr += tdr_
-                    crop_iou += crop_iou_
-                    weed_iou += weed_iou_
-            print("=================================================================================================================================================")
-            print("Epoch: %3d, train mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), train F1_score = %.4f, train sensitivity = %.4f, train TDR = %.4f" % (epoch, miou / len(train_img_dataset),
-                                                                                                                                                 crop_iou / len(train_img_dataset),
-                                                                                                                                                 weed_iou / len(train_img_dataset),
-                                                                                                                                                  f1_score / len(train_img_dataset),
-                                                                                                                                                  sensitivity / len(train_img_dataset),
-                                                                                                                                                  tdr / len(train_img_dataset)))
+            miou_ = miou[0,0]/(miou[0,0] + miou[0,1] + miou[1,0])
+            crop_iou_ = crop_iou[0,0]/(crop_iou[0,0] + crop_iou[0,1] + crop_iou[1,0])
+            weed_iou_ = weed_iou[0,0]/(weed_iou[0,0] + weed_iou[0,1] + weed_iou[1,0])
+            recall_ = miou[0,0] / (miou[0,0] + miou[0,1])
+            precision_ = miou[0,0] / (miou[0,0] + miou[1,0])
+            f1_score_ = (2*precision_*recall_) / (precision_ + recall_)
+            print("train mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), train F1_score = %.4f, train sensitivity(recall) = %.4f, train precision = %.4f" % (miou_,
+                                                                                                                                                crop_iou_,
+                                                                                                                                                weed_iou_,
+                                                                                                                                                f1_score_,
+                                                                                                                                                recall_,
+                                                                                                                                                precision_))
             output_text.write("Epoch: ")
             output_text.write(str(epoch))
             output_text.write("===================================================================")
             output_text.write("\n")
             output_text.write("train mIoU: ")
-            output_text.write("%.4f" % (miou / len(train_img_dataset)))
+            output_text.write("%.4f" % (miou_))
             output_text.write(", crop_iou: ")
-            output_text.write("%.4f" % (crop_iou / len(train_img_dataset)))
+            output_text.write("%.4f" % (crop_iou_))
             output_text.write(", weed_iou: ")
-            output_text.write("%.4f" % (weed_iou / len(train_img_dataset)))
+            output_text.write("%.4f" % (weed_iou_))
             output_text.write(", train F1_score: ")
-            output_text.write("%.4f" % (f1_score / len(train_img_dataset)))
+            output_text.write("%.4f" % (f1_score_))
             output_text.write(", train sensitivity: ")
-            output_text.write("%.4f" % (sensitivity / len(train_img_dataset)))
-            output_text.write(", train TDR: ")
-            output_text.write("%.4f" % (tdr / len(train_img_dataset)))
+            output_text.write("%.4f" % (recall_))
             output_text.write("\n")
 
             val_iter = iter(val_ge)
             miou = 0.
-            f1_score = 0.
-            tdr = 0.
-            sensitivity = 0.
+            f1_score_ = 0.
             crop_iou = 0.
             weed_iou = 0.
+            recall_ = 0.
+            precision_ = 0.
             for i in range(len(val_img_dataset)):
                 batch_images, batch_labels = next(val_iter)
                 for j in range(1):
@@ -632,48 +621,38 @@ def main():
                                         label=batch_label, 
                                         shape=[FLAGS.img_size*FLAGS.img_size, ], 
                                         total_classes=FLAGS.total_classes).MIOU()
-                    f1_score_, recall_ = Measurement(predict=image,
-                                            label=batch_label,
-                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
-                                            total_classes=FLAGS.total_classes).F1_score_and_recall()
-                    tdr_ = Measurement(predict=image,
-                                            label=batch_label,
-                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
-                                            total_classes=FLAGS.total_classes).TDR()
 
-                    miou += miou_
-                    f1_score += f1_score_
-                    sensitivity += recall_
-                    tdr += tdr_
-                    crop_iou += crop_iou_
-                    weed_iou += weed_iou_
-            print("Epoch: %3d, val mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), val F1_score = %.4f, val sensitivity = %.4f, val TDR = %.4f" % (epoch, miou / len(val_img_dataset),
-                                                                                                                                         crop_iou / len(val_img_dataset),
-                                                                                                                                         weed_iou / len(val_img_dataset),
-                                                                                                                                         f1_score / len(val_img_dataset),
-                                                                                                                                         sensitivity / len(val_img_dataset),
-                                                                                                                                         tdr / len(val_img_dataset)))
+            miou_ = miou[0,0]/(miou[0,0] + miou[0,1] + miou[1,0])
+            crop_iou_ = crop_iou[0,0]/(crop_iou[0,0] + crop_iou[0,1] + crop_iou[1,0])
+            weed_iou_ = weed_iou[0,0]/(weed_iou[0,0] + weed_iou[0,1] + weed_iou[1,0])
+            recall_ = miou[0,0] / (miou[0,0] + miou[0,1])
+            precision_ = miou[0,0] / (miou[0,0] + miou[1,0])
+            f1_score_ = (2*precision_*recall_) / (precision_ + recall_)
+            print("val mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), val F1_score = %.4f, val sensitivity(recall) = %.4f, val precision = %.4f" % (miou_,
+                                                                                                                                                crop_iou_,
+                                                                                                                                                weed_iou_,
+                                                                                                                                                f1_score_,
+                                                                                                                                                recall_,
+                                                                                                                                                precision_))
             output_text.write("val mIoU: ")
-            output_text.write("%.4f" % (miou / len(val_img_dataset)))
+            output_text.write("%.4f" % (miou_))
             output_text.write(", crop_iou: ")
-            output_text.write("%.4f" % (crop_iou / len(val_img_dataset)))
+            output_text.write("%.4f" % (crop_iou_))
             output_text.write(", weed_iou: ")
-            output_text.write("%.4f" % (weed_iou / len(val_img_dataset)))
+            output_text.write("%.4f" % (weed_iou_))
             output_text.write(", val F1_score: ")
-            output_text.write("%.4f" % (f1_score / len(val_img_dataset)))
+            output_text.write("%.4f" % (f1_score_))
             output_text.write(", val sensitivity: ")
-            output_text.write("%.4f" % (sensitivity / len(val_img_dataset)))
-            output_text.write(", val TDR: ")
-            output_text.write("%.4f" % (tdr / len(val_img_dataset)))
+            output_text.write("%.4f" % (recall_))
             output_text.write("\n")
 
             test_iter = iter(test_ge)
             miou = 0.
-            f1_score = 0.
-            tdr = 0.
-            sensitivity = 0.
+            f1_score_ = 0.
             crop_iou = 0.
             weed_iou = 0.
+            recall_ = 0.
+            precision_ = 0.
             for i in range(len(test_img_dataset)):
                 batch_images, batch_labels = next(test_iter)
                 for j in range(1):
@@ -700,40 +679,34 @@ def main():
                                         label=batch_label, 
                                         shape=[FLAGS.img_size*FLAGS.img_size, ], 
                                         total_classes=FLAGS.total_classes).MIOU()
-                    f1_score_, recall_ = Measurement(predict=image,
-                                            label=batch_label,
-                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
-                                            total_classes=FLAGS.total_classes).F1_score_and_recall()
-                    tdr_ = Measurement(predict=image,
-                                            label=batch_label,
-                                            shape=[FLAGS.img_size*FLAGS.img_size, ],
-                                            total_classes=FLAGS.total_classes).TDR()
 
                     miou += miou_
-                    f1_score += f1_score_
-                    sensitivity += recall_
-                    tdr += tdr_
                     crop_iou += crop_iou_
                     weed_iou += weed_iou_
-            print("Epoch: %3d, test mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), test F1_score = %.4f, test sensitivity = %.4f, test TDR = %.4f" % (epoch, miou / len(test_img_dataset),
-                                                                                                                                             crop_iou / len(test_img_dataset),
-                                                                                                                                             weed_iou / len(test_img_dataset),
-                                                                                                                                             f1_score / len(test_img_dataset),
-                                                                                                                                             sensitivity / len(test_img_dataset),
-                                                                                                                                             tdr / len(test_img_dataset)))
+
+            miou_ = miou[0,0]/(miou[0,0] + miou[0,1] + miou[1,0])
+            crop_iou_ = crop_iou[0,0]/(crop_iou[0,0] + crop_iou[0,1] + crop_iou[1,0])
+            weed_iou_ = weed_iou[0,0]/(weed_iou[0,0] + weed_iou[0,1] + weed_iou[1,0])
+            recall_ = miou[0,0] / (miou[0,0] + miou[0,1])
+            precision_ = miou[0,0] / (miou[0,0] + miou[1,0])
+            f1_score_ = (2*precision_*recall_) / (precision_ + recall_)
+            print("test mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), test F1_score = %.4f, test sensitivity(recall) = %.4f, test precision = %.4f" % (miou_,
+                                                                                                                                                crop_iou_,
+                                                                                                                                                weed_iou_,
+                                                                                                                                                f1_score_,
+                                                                                                                                                recall_,
+                                                                                                                                                precision_))
             print("=================================================================================================================================================")
             output_text.write("test mIoU: ")
-            output_text.write("%.4f" % (miou / len(test_img_dataset)))
+            output_text.write("%.4f" % (miou_))
             output_text.write(", crop_iou: ")
-            output_text.write("%.4f" % (crop_iou / len(test_img_dataset)))
+            output_text.write("%.4f" % (crop_iou_))
             output_text.write(", weed_iou: ")
-            output_text.write("%.4f" % (weed_iou / len(test_img_dataset)))
+            output_text.write("%.4f" % (weed_iou_))
             output_text.write(", test F1_score: ")
-            output_text.write("%.4f" % (f1_score / len(test_img_dataset)))
+            output_text.write("%.4f" % (f1_score_))
             output_text.write(", test sensitivity: ")
-            output_text.write("%.4f" % (sensitivity / len(test_img_dataset)))
-            output_text.write(", test TDR: ")
-            output_text.write("%.4f" % (tdr / len(test_img_dataset)))
+            output_text.write("%.4f" % (recall_))
             output_text.write("\n")
             output_text.write("===================================================================")
             output_text.write("\n")
