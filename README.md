@@ -10,7 +10,7 @@
 * Colab_train.py 에서는 batch 를 약간 무리해서 설정했음 --> loss의 alpha 값들은 0.2 or 0.8로 고정되도록 변경했음
 <br/>
 
-* Main com 성능은 main_com_train.py 기준으로 잡자
+* Main com 성능은 main_com_train.py 기준으로 잡자 --> 이게 가장 좋게 잘 나옴 --> 이것으로 결정하자
 * sub_com_train.py --> around 0.856 
 * Currently, Temp_train.py is running on main computer
 * 일반 Dice 로 변경 --> 86까지 오름
