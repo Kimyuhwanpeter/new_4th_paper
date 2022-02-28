@@ -442,40 +442,6 @@ def main():
             tr_iter = iter(train_ge)
             tr_idx = len(train_img_dataset) // FLAGS.batch_size
 
-            class_imbal_labels_buf = 0.
-            for step in range(tr_idx):
-                _, _, batch_labels = next(tr_iter)  
-                batch_labels = batch_labels.numpy()
-                batch_labels = np.where(batch_labels == FLAGS.ignore_label, 2, batch_labels)    # 2 is void
-                batch_labels = np.where(batch_labels == 255, 0, batch_labels)
-                batch_labels = np.where(batch_labels == 128, 1, batch_labels)
-                batch_labels = np.squeeze(batch_labels, -1)
-
-                class_imbal_labels = batch_labels
-                for i in range(FLAGS.batch_size):
-                    class_imbal_label = class_imbal_labels[i]
-                    class_imbal_label = np.reshape(class_imbal_label, [FLAGS.img_size*FLAGS.img_size, ])
-                    count_c_i_lab = np.bincount(class_imbal_label, minlength=FLAGS.total_classes)
-                    class_imbal_labels_buf += count_c_i_lab
-            class_imbal_labels_buf = class_imbal_labels_buf[0:FLAGS.total_classes]
-            object_buf = np.array([class_imbal_labels_buf[2], class_imbal_labels_buf[0] + class_imbal_labels_buf[1]], dtype=np.float32)
-            crop_buf = np.array([class_imbal_labels_buf[1], class_imbal_labels_buf[0]], dtype=np.float32)
-            weed_buf = np.array([class_imbal_labels_buf[0], class_imbal_labels_buf[1]], dtype=np.float32)
-
-            class_imbal_labels_buf = (np.max(class_imbal_labels_buf / np.sum(class_imbal_labels_buf)) + 1 - (class_imbal_labels_buf / np.sum(class_imbal_labels_buf)))
-            object_buf = (np.max(object_buf / np.sum(object_buf)) + 1 - (object_buf / np.sum(object_buf)))
-            crop_buf = (np.max(crop_buf / np.sum(crop_buf)) + 1 - (crop_buf / np.sum(crop_buf)))
-            weed_buf = (np.max(weed_buf / np.sum(weed_buf)) + 1 - (weed_buf / np.sum(weed_buf)))
-
-            class_imbal_labels_buf = tf.nn.softmax(class_imbal_labels_buf[0:FLAGS.total_classes-1]).numpy()
-            object_buf = tf.nn.softmax(object_buf).numpy()
-            crop_buf = tf.nn.softmax(crop_buf).numpy()
-            weed_buf = tf.nn.softmax(weed_buf).numpy()
-
-            print(class_imbal_labels_buf)
-            print(object_buf)
-            print(crop_buf)
-            print(weed_buf)
             tr_iter = iter(train_ge)
             tr_idx = len(train_img_dataset) // FLAGS.batch_size
             for step in range(tr_idx):
@@ -485,6 +451,29 @@ def main():
                 batch_labels = np.where(batch_labels == 255, 0, batch_labels)
                 batch_labels = np.where(batch_labels == 128, 1, batch_labels)
                 batch_labels = np.squeeze(batch_labels, -1)
+
+                class_imbal_labels_buf = 0.
+                class_imbal_labels = batch_labels
+                for i in range(FLAGS.batch_size):
+                    class_imbal_label = class_imbal_labels[i]
+                    class_imbal_label = np.reshape(class_imbal_label, [FLAGS.img_size*FLAGS.img_size, ])
+                    count_c_i_lab = np.bincount(class_imbal_label, minlength=FLAGS.total_classes)
+                    class_imbal_labels_buf += count_c_i_lab
+
+                class_imbal_labels_buf = class_imbal_labels_buf[0:FLAGS.total_classes]
+                object_buf = np.array([class_imbal_labels_buf[2], class_imbal_labels_buf[0] + class_imbal_labels_buf[1]], dtype=np.float32)
+                crop_buf = np.array([class_imbal_labels_buf[1], class_imbal_labels_buf[0]], dtype=np.float32)
+                weed_buf = np.array([class_imbal_labels_buf[0], class_imbal_labels_buf[1]], dtype=np.float32)
+
+                class_imbal_labels_buf = (np.max(class_imbal_labels_buf / np.sum(class_imbal_labels_buf)) + 1 - (class_imbal_labels_buf / np.sum(class_imbal_labels_buf)))
+                object_buf = (np.max(object_buf / np.sum(object_buf)) + 1 - (object_buf / np.sum(object_buf)))
+                crop_buf = (np.max(crop_buf / np.sum(crop_buf)) + 1 - (crop_buf / np.sum(crop_buf)))
+                weed_buf = (np.max(weed_buf / np.sum(weed_buf)) + 1 - (weed_buf / np.sum(weed_buf)))
+
+                class_imbal_labels_buf = tf.nn.softmax(class_imbal_labels_buf[0:FLAGS.total_classes-1]).numpy()
+                object_buf = tf.nn.softmax(object_buf).numpy()
+                crop_buf = tf.nn.softmax(crop_buf).numpy()
+                weed_buf = tf.nn.softmax(weed_buf).numpy()
 
                 objectiness = np.where(batch_labels == 2, 0, 1)  # 피사체가 있는곳은 1 없는곳은 0으로 만들어준것
 
@@ -559,6 +548,10 @@ def main():
                                         label=batch_label, 
                                         shape=[FLAGS.img_size*FLAGS.img_size, ], 
                                         total_classes=FLAGS.total_classes).MIOU()
+                    
+                    miou += miou_
+                    crop_iou += crop_iou_
+                    weed_iou += weed_iou_
 
             miou_ = miou[0,0]/(miou[0,0] + miou[0,1] + miou[1,0])
             crop_iou_ = crop_iou[0,0]/(crop_iou[0,0] + crop_iou[0,1] + crop_iou[1,0])
@@ -621,6 +614,10 @@ def main():
                                         label=batch_label, 
                                         shape=[FLAGS.img_size*FLAGS.img_size, ], 
                                         total_classes=FLAGS.total_classes).MIOU()
+                    
+                    miou += miou_
+                    crop_iou += crop_iou_
+                    weed_iou += weed_iou_
 
             miou_ = miou[0,0]/(miou[0,0] + miou[0,1] + miou[1,0])
             crop_iou_ = crop_iou[0,0]/(crop_iou[0,0] + crop_iou[0,1] + crop_iou[1,0])
