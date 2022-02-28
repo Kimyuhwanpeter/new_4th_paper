@@ -13,4 +13,4 @@
 * Main com 성능은 main_com_train.py 기준으로 잡자
 * sub_com_train.py --> around 0.856 
 * Currently, Temp_train.py is running on main computer
-* 일반 Dice 로 변경
+* 일반 Dice 로 변경 --> 86까지 오름
