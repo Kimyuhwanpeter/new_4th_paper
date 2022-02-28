@@ -759,69 +759,52 @@ def main():
 
         test_iter = iter(test_ge)
         miou = 0.
-        f1_score = 0.
-        tdr = 0.
-        sensitivity = 0.
+        f1_score_ = 0.
         crop_iou = 0.
         weed_iou = 0.
-        pre_ = 0.
-        TP_, TN_, FP_, FN_ = 0, 0, 0, 0
+        recall_ = 0.
+        precision_ = 0.
+        f1_score_ = 0.
         for i in range(len(test_img_dataset)):
             batch_images, nomral_img, batch_labels = next(test_iter)
             batch_labels = tf.squeeze(batch_labels, -1)
             for j in range(1):
                 batch_image = tf.expand_dims(batch_images[j], 0)
-                logits = run_model(model, batch_image, False) # type을 batch label과 같은 type으로 맞춰주어야함
-                object_predict = tf.nn.sigmoid(logits[0, :, :, 1])
-                predict = tf.nn.sigmoid(logits[0, :, :, 0:1])
-                predict = np.where(predict.numpy() >= 0.5, 1, 0)
-                predict_temp = predict
-                image = predict
-                object_predict_predict = np.where(object_predict.numpy() >= 0.5, 1, 2)
-                onject_predict_axis = np.where(object_predict_predict==2)   # 2 배경성분이 있는 축만 가지고 옴
-                predict_temp[onject_predict_axis] = 2
+                raw_logits = run_model(model, batch_image, False)
+                temp_raw_logits = raw_logits
+                raw_logits = tf.nn.sigmoid(raw_logits)
+                output = run_model(model2, batch_image * raw_logits, False)
+                object_output = tf.nn.sigmoid(output[0, :, :, 2])
+                object_output = tf.where(object_output >= 0.5, 1, 2).numpy()
+                false_object_indices = np.where(object_output == 2)
 
-                #batch_image = tf.expand_dims(batch_images[j], 0)
-                #predict = run_model(model, batch_image, False) # type을 batch label과 같은 type으로 맞춰주어야함
-                #predict = tf.nn.sigmoid(predict[0, :, :, 0:1])
-                #predict = np.where(predict.numpy() >= 0.5, 1, 0)
+                crop_weed_output = tf.nn.softmax(output[0, :, :, 0:2], -1)
+                crop_weed_output = tf.cast(tf.argmax(crop_weed_output, -1), tf.int32).numpy()
+                crop_weed_output[false_object_indices] = 2
+                image = crop_weed_output
 
+
+                batch_label = batch_labels[j]
                 batch_label = tf.cast(batch_labels[j], tf.uint8).numpy()
                 batch_label = np.where(batch_label == FLAGS.ignore_label, 2, batch_label)    # 2 is void
                 batch_label = np.where(batch_label == 255, 0, batch_label)
                 batch_label = np.where(batch_label == 128, 1, batch_label)
-                ignore_label_axis = np.where(batch_label==2)   # 출력은 x,y axis로 나옴!
-                predict[ignore_label_axis] = 2
 
-                predict_temp1 = predict_temp
-                batch_label1 = batch_label
-                miou_, crop_iou_, weed_iou_ = Measurement(predict=predict_temp1,
-                                    label=batch_label1, 
+
+                miou_, crop_iou_, weed_iou_ = Measurement(predict=image,
+                                    label=batch_label, 
                                     shape=[FLAGS.img_size*FLAGS.img_size, ], 
                                     total_classes=FLAGS.total_classes).MIOU()
-                predict_temp2 = predict_temp
-                batch_label2 = batch_label
-                f1_score_, recall_, TP, TN, FP, FN = Measurement(predict=predict_temp2,
-                                        label=batch_label2,
-                                        shape=[FLAGS.img_size*FLAGS.img_size, ],
-                                        total_classes=FLAGS.total_classes).F1_score_and_recall()
-                predict_temp3 = predict_temp
-                batch_label3 = batch_label
-                tdr_ = Measurement(predict=predict_temp3,
-                                        label=batch_label3,
-                                        shape=[FLAGS.img_size*FLAGS.img_size, ],
-                                        total_classes=FLAGS.total_classes).TDR()
 
-                pred_mask_color = color_map[predict_temp]  # 논문그림처럼 할것!
-                pred_mask_color = np.squeeze(pred_mask_color, 2)
+                pred_mask_color = color_map[crop_weed_output]  # 논문그림처럼 할것!
                 batch_label = np.expand_dims(batch_label, -1)
                 batch_label = np.concatenate((batch_label, batch_label, batch_label), -1)
                 label_mask_color = np.zeros([FLAGS.img_size, FLAGS.img_size, 3], dtype=np.uint8)
                 label_mask_color = np.where(batch_label == np.array([0,0,0], dtype=np.uint8), np.array([255, 0, 0], dtype=np.uint8), label_mask_color)
                 label_mask_color = np.where(batch_label == np.array([1,1,1], dtype=np.uint8), np.array([0, 0, 255], dtype=np.uint8), label_mask_color)
 
-                temp_img = np.concatenate((predict_temp, predict_temp, predict_temp), -1)
-                image = np.concatenate((image, image, image), -1)
+                temp_img = np.concatenate((crop_weed_output[:, :, np.newaxis], crop_weed_output[:, :, np.newaxis], crop_weed_output[:, :, np.newaxis]), -1)
+                image = np.concatenate((image[:, :, np.newaxis], image[:, :, np.newaxis], image[:, :, np.newaxis]), -1)
                 pred_mask_warping = np.where(temp_img == np.array([2,2,2], dtype=np.uint8), nomral_img[j], image)
                 pred_mask_warping = np.where(temp_img == np.array([0,0,0], dtype=np.uint8), np.array([255, 0, 0], dtype=np.uint8), pred_mask_warping)
                 pred_mask_warping = np.where(temp_img == np.array([1,1,1], dtype=np.uint8), np.array([0, 0, 255], dtype=np.uint8), pred_mask_warping)
@@ -831,38 +814,24 @@ def main():
                 plt.imsave(FLAGS.test_images + "/" + name + "_label.png", label_mask_color)
                 plt.imsave(FLAGS.test_images + "/" + name + "_predict.png", pred_mask_color)
                 plt.imsave(FLAGS.test_images + "/" + name + "_predict_warp.png", pred_mask_warping)
+                #back_iou += back_iou_
 
                 miou += miou_
-                f1_score += f1_score_
-                sensitivity += recall_
-                tdr += tdr_
                 crop_iou += crop_iou_
                 weed_iou += weed_iou_
-                TP_ += TP
-                TN_ += TN
-                FP_ += FP
-                FN_ += FN
 
-
-        print("test mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), test F1_score = %.4f, test sensitivity = %.4f, test TDR = %.4f" % (miou / len(test_img_dataset),
-                                                                                                                                            crop_iou / len(test_img_dataset),
-                                                                                                                                            weed_iou / len(test_img_dataset),
-                                                                                                                                            f1_score / len(test_img_dataset),
-                                                                                                                                            sensitivity / len(test_img_dataset),
-                                                                                                                                            tdr / len(test_img_dataset)))
-        #print(pre_ / len(test_img_dataset))
-        TP_FP = (TP_ + FP_) + 1e-7
-
-        TP_FN = (TP_ + FN_) + 1e-7
-
-        out = np.zeros((1))
-        Precision = np.divide(TP_, TP_FP)
-        Recall = np.divide(TP_, TP_FN)
-
-        Pre_Re = (Precision + Recall) + 1e-7
-
-        F1_score = np.divide(2. * (Precision * Recall), Pre_Re)
-        print(F1_score, Recall)
+        miou_ = miou[0,0]/(miou[0,0] + miou[0,1] + miou[1,0])
+        crop_iou_ = crop_iou[0,0]/(crop_iou[0,0] + crop_iou[0,1] + crop_iou[1,0])
+        weed_iou_ = weed_iou[0,0]/(weed_iou[0,0] + weed_iou[0,1] + weed_iou[1,0])
+        recall_ = miou[0,0] / (miou[0,0] + miou[0,1])
+        precision_ = miou[0,0] / (miou[0,0] + miou[1,0])
+        f1_score_ = (2*precision_*recall_) / (precision_ + recall_)
+        print("test mIoU = %.4f (crop_iou = %.4f, weed_iou = %.4f), test F1_score = %.4f, test sensitivity(recall) = %.4f, test precision = %.4f" % (miou_,
+                                                                                                                                            crop_iou_,
+                                                                                                                                            weed_iou_,
+                                                                                                                                            f1_score_,
+                                                                                                                                            recall_,
+                                                                                                                                            precision_))
 
 if __name__ == "__main__":
     main()
